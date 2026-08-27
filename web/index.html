@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#10141a" />
+    <title>mcFAST · OpenFAST Case Inspector</title>
+    <script>
+      try {
+        const savedTheme = localStorage.getItem('mcfast-theme');
+        document.documentElement.dataset.theme = savedTheme || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      } catch {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    </script>
+    <script type="module" src="/src/main.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="mcFAST home">
+          <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+            <path d="M12 12V3.2c3.5 0 5.2 3.6 3.8 6.4L12 12Z" fill="currentColor" opacity=".9" />
+            <path d="m12 12 7.8 4.4c-1.8 3-5.9 3.7-7.9 1.2L12 12Z" fill="currentColor" opacity=".65" />
+            <path d="m12 12-7.8 4.4c1.8 3 5.9 3.7 7.9 1.2L12 12Z" fill="currentColor" opacity=".4" />
+          </svg>
+          <span class="brand-text">mcFAST</span>
+          <span class="brand-sub">OPENFAST CASE INSPECTOR</span>
+        </a>
+        <div class="status-cluster">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to light mode" aria-pressed="false">
+            <span class="theme-glyph" aria-hidden="true"><span class="theme-sun">☀</span><span class="theme-moon">◐</span></span>
+            <span id="themeLabel">DARK</span>
+          </button>
+          <div class="status-item"><span class="status-dot idle" id="statusDot"></span><span id="statusText">CONNECTING</span></div>
+          <div class="status-item sim-clock"><span class="muted">t =</span><span id="simClock">00:00.0</span><span class="muted">/ OPENFAST</span></div>
+        </div>
+      </header>
+
+      <div class="workspace-shell">
+        <aside class="side-panel" id="sidePanel" aria-label="Workspace configuration">
+          <div class="panel-header">
+            <span class="panel-title">WORKSPACE PROJECT</span>
+            <button class="icon-btn" id="collapseBtn" type="button" title="Collapse panel" aria-label="Collapse panel">‹</button>
+          </div>
+          <div class="panel-selector">
+            <label for="workspaceSelect">ACTIVE WORKSPACE</label>
+            <div class="workspace-picker">
+              <select id="workspaceSelect"><option>Loading workspaces…</option></select>
+              <button class="workspace-add" id="importWorkspaceBtn" type="button" title="Import .fst project" aria-label="Import .fst project">＋</button>
+            </div>
+          </div>
+          <div class="panel-meta"><span id="activeModelName">WAITING FOR API</span><span><b id="modelMode">LOCKED .FST</b></span></div>
+          <div class="panel-body">
+            <section class="tree-section">
+              <div class="section-label"><span>LINKED INPUT GRAPH</span><span id="fileCount">0 FILES</span></div>
+              <div class="tree-hint">Select a file to expand its parsed records.</div>
+              <div id="fileTree" class="file-tree"><div class="console-empty">Choose a model deck to inspect its linked inputs.</div></div>
+            </section>
+          </div>
+        </aside>
+
+        <button class="expand-tab" id="expandTab" type="button" title="Expand model config" aria-label="Expand model config">›</button>
+
+        <main class="viewport" aria-label="3D model viewport">
+          <canvas id="scene" aria-label="Interactive 3D wind turbine. Drag to orbit, scroll to zoom, and right-drag to pan."></canvas>
+          <div class="viewport-caption">3D VIEWPORT <span>·</span> <b>drag</b> TO ORBIT <span>·</span> <b>scroll</b> TO ZOOM <span>·</span> <b>right drag</b> TO PAN <span>·</span> <b>double click</b> TO RESET</div>
+          <div class="viewport-label"><span id="viewportModelLabel">OPENFAST MODEL</span><b>PARAMETRIC GEOMETRY</b></div>
+
+          <div class="hud">
+            <div class="hud-card gauge-card">
+              <div class="gauge-wrap">
+                <svg viewBox="0 0 80 80" width="80" height="80" aria-hidden="true">
+                  <circle class="gauge-track" cx="40" cy="40" r="33"></circle>
+                  <circle class="gauge-fill" id="gaugeFill" cx="40" cy="40" r="33" stroke-dasharray="207.3" stroke-dashoffset="207.3"></circle>
+                </svg>
+                <div class="gauge-readout"><span class="gauge-value" id="rpmValue">0.0</span><span class="gauge-unit">RPM</span></div>
+              </div>
+              <span class="gauge-label">ROTOR SPEED</span>
+            </div>
+            <div class="hud-card stat-card">
+              <div class="stat-row"><span class="stat-label">POWER OUTPUT</span><span class="stat-value" id="powerValue">0 kW</span></div>
+              <div class="stat-row"><span class="stat-label">WIND SPEED</span><span class="stat-value" id="windValue">— m/s</span></div>
+              <div class="stat-row"><span class="stat-label">GEN. TORQUE</span><span class="stat-value" id="torqueValue">— kNm</span></div>
+            </div>
+          </div>
+
+          <div class="advanced-dash" aria-label="Advanced features">
+            <span>ADVANCED FEATURES</span>
+            <button class="advanced-launcher" id="advancedBtn" type="button">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h7M13 5.5h4M3 10h2m3 0h9M3 14.5h8m3 0h3M10 3v5m-4-1v6m7-1v5"/></svg>
+              <span><b>VARIABLE STUDY</b><small>Workspace &amp; sampling</small></span>
+              <i>›</i>
+            </button>
+          </div>
+
+          <div class="controls-dock">
+            <div class="progress-track" id="progressTrack"><div class="progress-fill" id="progressFill"></div></div>
+            <button class="run-btn" id="runBtn" type="button"><span class="dot-icon"></span><span id="runBtnLabel">RUN OPENFAST</span></button>
+            <span class="run-note">NATIVE OPENFAST · SAVES RESULTS</span>
+          </div>
+        </main>
+      </div>
+
+      <section class="results-drawer" id="resultsDrawer" aria-label="Results console">
+        <div class="drawer-header" id="drawerHeader" role="button" tabindex="0" aria-expanded="false">
+          <span class="drawer-title">RESULTS / CONSOLE</span>
+          <span class="fault-badge" id="runBadge">IDLE</span>
+          <select class="run-history-select" id="runHistorySelect" aria-label="Workspace run history"><option value="">NO RUNS</option></select>
+          <span class="drawer-spacer"></span><span class="drawer-chevron">▲</span>
+        </div>
+        <div class="drawer-body">
+          <div class="run-artifacts" id="runArtifacts" hidden></div>
+          <pre class="console" id="consoleOutput"><span class="console-empty">No run yet. Press RUN OPENFAST to start the selected input deck.</span></pre>
+        </div>
+      </section>
+    </div>
+
+    <dialog class="advanced-modal" id="advancedModal" aria-labelledby="advancedTitle">
+      <form method="dialog" class="modal-shell" id="workspaceForm">
+        <header class="modal-header">
+          <div class="modal-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 6.5h9m4 0h3M4 12h3m4 0h9M4 17.5h10m4 0h2M13 4v5m-6 .5v5m7-1.5v9"/></svg>
+          </div>
+          <div>
+            <span class="modal-eyebrow">ADVANCED FEATURES / VARIABLE STUDY</span>
+            <h2 id="advancedTitle">Configure a variable study</h2>
+            <p>Save reproducible sampling setups inside the active workspace project.</p>
+          </div>
+          <button class="modal-close" id="advancedClose" type="button" aria-label="Close">×</button>
+        </header>
+
+        <div class="modal-content">
+          <section class="workspace-basics">
+            <label class="field workspace-name-field">
+              <span>STUDY NAME</span>
+              <input id="workspaceName" maxlength="80" required placeholder="e.g. Rated wind sensitivity" />
+            </label>
+            <div class="source-deck">
+              <span>LOCKED WORKSPACE ENTRY</span>
+              <strong id="workspaceSource">No model selected</strong>
+              <small id="workspaceSourceMeta">Study files stay paired with this workspace.</small>
+            </div>
+          </section>
+
+          <section class="saved-study-bar">
+            <label class="field"><span>SAVED STUDIES</span><select id="studySelect"><option value="">New study</option></select></label>
+            <button class="secondary-btn" id="newStudyBtn" type="button">NEW STUDY</button>
+          </section>
+
+          <section class="modal-section variable-section">
+            <div class="modal-section-heading">
+              <div><span class="step-number">01</span><div><h3>Variables</h3><p>Select a linked file, then bind its exact parameter key.</p></div></div>
+              <button class="secondary-btn" id="addVariableBtn" type="button"><span>＋</span> ADD VARIABLE</button>
+            </div>
+            <div class="variable-columns" aria-hidden="true"><span>VARIABLE NAME</span><span>INPUT FILE</span><span>EXACT PARAMETER</span><span>RANGE</span><span></span></div>
+            <div class="variable-list" id="variableList"></div>
+            <button class="empty-variable" id="emptyVariableBtn" type="button">
+              <span>＋</span><b>Add the first variable</b><small>Choose from any input file linked to this model.</small>
+            </button>
+          </section>
+
+          <section class="modal-section sampling-section">
+            <div class="modal-section-heading">
+              <div><span class="step-number">02</span><div><h3>Sample source</h3><p>Upload explicit cases or generate values across each range.</p></div></div>
+            </div>
+            <div class="sampling-tabs" role="tablist" aria-label="Sampling method">
+              <button type="button" role="tab" data-sampling="uniform" aria-selected="true"><b>UNIFORM</b><small>Evenly spaced values</small></button>
+              <button type="button" role="tab" data-sampling="random" aria-selected="false"><b>RANDOM</b><small>Seeded random values</small></button>
+              <button type="button" role="tab" data-sampling="csv" aria-selected="false"><b>UPLOAD CSV</b><small>One case per row</small></button>
+            </div>
+            <div class="sampling-config" id="rangeSamplingConfig">
+              <label class="field"><span>NUMBER OF SAMPLES</span><input id="sampleCount" type="number" min="1" max="100000" value="10" /></label>
+              <label class="field seed-field" id="seedField" hidden><span>RANDOM SEED</span><input id="sampleSeed" type="number" value="42" /></label>
+              <div class="sample-summary"><span id="sampleMethodIcon">↔</span><p><b id="sampleSummaryTitle">10 uniform samples</b><small id="sampleSummaryCopy">Includes both range endpoints.</small></p></div>
+            </div>
+            <div class="csv-config" id="csvConfig" hidden>
+              <input id="csvInput" type="file" accept=".csv,text/csv" hidden />
+              <button class="csv-drop" id="csvChooseBtn" type="button"><span>⇧</span><p><b id="csvFileName">Choose a CSV file</b><small id="csvFileMeta">Header names must match the variable names above.</small></p><i>BROWSE</i></button>
+            </div>
+          </section>
+        </div>
+
+        <footer class="modal-footer">
+          <div class="workspace-result" id="workspaceResult" hidden></div>
+          <span class="modal-footnote" id="modalFootnote">Saved inside this workspace; reference model files stay unchanged.</span>
+          <button class="secondary-btn" id="cancelWorkspaceBtn" type="button">CANCEL</button>
+          <button class="create-workspace-btn" id="createWorkspaceBtn" type="submit"><span>SAVE STUDY</span><i>→</i></button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog class="import-modal" id="importModal" aria-labelledby="importTitle">
+      <form method="dialog" class="import-shell" id="importForm">
+        <header class="modal-header">
+          <div class="modal-icon" aria-hidden="true">＋</div>
+          <div>
+            <span class="modal-eyebrow">NEW WORKSPACE PROJECT</span>
+            <h2 id="importTitle">Import an OpenFAST deck</h2>
+            <p>The source tree is copied once. All edits and results stay in the new workspace.</p>
+          </div>
+          <button class="modal-close" id="importClose" type="button" aria-label="Close">×</button>
+        </header>
+        <div class="import-content">
+          <label class="field"><span>WORKSPACE NAME</span><input id="importName" maxlength="80" required placeholder="e.g. UMaine baseline" /></label>
+          <label class="field"><span>OFFICIAL EXAMPLE</span><select id="sourceSelect"><option value="">Choose a discovered .fst…</option></select></label>
+          <div class="import-separator"><span>OR USE A LOCAL PATH</span></div>
+          <label class="field"><span>ABSOLUTE OR MODEL-RELATIVE .FST PATH</span><input id="sourcePath" required placeholder="/path/to/project/model.fst" /></label>
+          <p class="import-note">The smallest safe common model tree is mirrored. The selected source is never edited.</p>
+        </div>
+        <footer class="modal-footer">
+          <span class="modal-footnote">One workspace contains one locked .fst project.</span>
+          <button class="secondary-btn" id="cancelImportBtn" type="button">CANCEL</button>
+          <button class="create-workspace-btn" id="confirmImportBtn" type="submit"><span>IMPORT WORKSPACE</span><i>→</i></button>
+        </footer>
+      </form>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

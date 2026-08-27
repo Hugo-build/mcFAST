@@ -1,0 +1,16 @@
+.venv/
+.openfast/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+web/node_modules/
+web/dist/
+models/IEA-15-240-RWT/
+*.out
+*.outb
+*.ech
+*.sum
+*.dbg
+results/openfast/*
+!results/openfast/README.md
+workspaces/

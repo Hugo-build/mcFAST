@@ -1,0 +1,26 @@
+#!/bin/sh
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+case "$script_dir" in
+  */.venv/bin)
+    project_dir=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+    ;;
+  */scripts)
+    project_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
+    ;;
+  *)
+    echo "Cannot locate the mcFAST project from $script_dir" >&2
+    exit 1
+    ;;
+esac
+
+openfast_bin="$project_dir/.openfast/conda-4.2.1/bin/openfast"
+
+if [ ! -x "$openfast_bin" ]; then
+  echo "OpenFAST 4.2.1 is not installed at $openfast_bin" >&2
+  echo "See the OpenFAST installation section in README.md." >&2
+  exit 127
+fi
+
+exec "$openfast_bin" "$@"
