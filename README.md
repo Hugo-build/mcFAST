@@ -12,13 +12,17 @@ Install [uv](https://docs.astral.sh/uv/) and Node.js 20.19 or newer, then run:
 ```bash
 uv sync --extra dev
 uv run python scripts/fetch_iea15mw.py
+uv run python scripts/fetch_iea22mw.py
 cd web && npm install && npm run build && cd ..
 uv run mcfast
 ```
 
-Open <http://127.0.0.1:8000>. The model fetch is pinned to the official IEA Wind
-15 MW v1.1.17 release and extracts the OpenFAST subtree, including the
-VolturnUS-S/UMaineSemi input deck.
+Open <http://127.0.0.1:8000>. The model fetchers extract only the OpenFAST
+subtrees from pinned official releases. The IEA Wind 15 MW fetcher uses v1.1.17
+and includes the VolturnUS-S/UMaineSemi input deck. The IEA Wind 22 MW fetcher
+uses v1.1.0 and includes both monopile and semisubmersible input decks from the
+[official model repository](https://github.com/IEAWindSystems/IEA-22-280-RWT).
+Both commands are safe to rerun; pass `--force` to replace an existing download.
 
 For frontend development, run the API and Vite separately:
 

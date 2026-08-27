@@ -19,6 +19,8 @@ TEMPLATE = """---------TurbSim input file---------
 60362647 RandSeed1 - seed
 True WrADFF - write bts
 False WrBLFF - write bladed
+False WrADTWR - write tower points
+True Clockwise - legacy output ordering flag
 21 NumGrid_Z - grid
 21 NumGrid_Y - grid
 0.05 TimeStep - seconds
@@ -59,6 +61,12 @@ def test_generate_turbsim_parameter_sweep(tmp_path: Path) -> None:
     content = paths[-1].read_text()
     assert "202 RandSeed1" in content
     assert "120.0 AnalysisTime" in content
+    assert "48 NumGrid_Z" in content
+    assert "48 NumGrid_Y" in content
+    assert "296.0 GridHeight" in content
+    assert "300.0 GridWidth" in content
+    assert "False WrHAWCFF" in content
+    assert "Clockwise" not in content
     assert '"NTM" IEC_WindType' in content
     assert "10.0 URef" in content
     assert "50.0 URef" not in content

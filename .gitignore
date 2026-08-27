@@ -6,6 +6,7 @@ __pycache__/
 web/node_modules/
 web/dist/
 models/IEA-15-240-RWT/
+models/IEA-22-280-RWT/
 *.out
 *.outb
 *.ech

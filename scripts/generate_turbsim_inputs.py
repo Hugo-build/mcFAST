@@ -75,23 +75,52 @@ def iec_wind_type(settings: TurbSimSettings) -> str:
     return f'"{settings.turbine_class}{settings.wind_type}"'
 
 
+def normalize_runtime_options(template: str) -> str:
+    """Migrate the pre-v4 Clockwise slot to the WrHAWCFF slot used by TurbSim 4.2."""
+    lines = template.splitlines(keepends=True)
+    keys = {
+        match.group("key")
+        for line in lines
+        if (match := INPUT_LINE.match(line.rstrip("\r\n")))
+    }
+    if "WrHAWCFF" in keys:
+        return template
+    if "Clockwise" not in keys:
+        return template
+
+    output: list[str] = []
+    for line in lines:
+        content = line.rstrip("\r\n")
+        ending = line[len(content):]
+        match = INPUT_LINE.match(content)
+        if match and match.group("key") == "Clockwise":
+            output.append(
+                f'{match.group("indent")}False{match.group("gap")}WrHAWCFF'
+                "        - Output full-field time-series data in HAWC form?"
+                f"{ending}"
+            )
+        else:
+            output.append(line)
+    return "".join(output)
+
+
 def render_case(template: str, settings: TurbSimSettings, speed: float, seed: int) -> str:
     if speed <= 0:
         raise ValueError("Wind speeds must be greater than zero")
     if not -(2**31) <= seed <= 2**31 - 1:
         raise ValueError(f"TurbSim seed is outside the signed 32-bit range: {seed}")
-    return replace_values(template, {
+    return replace_values(normalize_runtime_options(template), {
         "RandSeed1": str(seed),
         "WrADFF": "True",
         "WrBLFF": "False",
-        "NumGrid_Z": "21",
-        "NumGrid_Y": "21",
+        "NumGrid_Z": "48",
+        "NumGrid_Y": "48",
         "TimeStep": f"{settings.time_step:g}",
         "AnalysisTime": f"{settings.analysis_time:.1f}",
         "UsableTime": '"ALL"',
         "HubHt": "150.0",
-        "GridHeight": "252.0",
-        "GridWidth": "252.0",
+        "GridHeight": "296.0",
+        "GridWidth": "300.0",
         "TurbModel": '"IECKAI"',
         "IECstandard": f'"{settings.turbine_class}-ED{settings.iec_edition}"',
         "IECturbc": settings.turbulence_category,
@@ -221,5 +250,3 @@ if __name__ == "__main__":
     main()
 
     
-
-

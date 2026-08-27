@@ -120,7 +120,7 @@ export function createScene(canvas) {
     controls.update();
   }
 
-  function rebuild({ hubHeight = 150, bladeLength = 117, platformDraft = 20 } = {}) {
+  function rebuild({ hubHeight = 150, bladeLength = 117, floater = null } = {}) {
     if (turbine) {
       turbine.traverse(child => child.geometry?.dispose());
       scene.remove(turbine);
@@ -129,25 +129,13 @@ export function createScene(canvas) {
     baseScale = 230 / Math.max(hubHeight + bladeLength, 180);
     turbine.scale.setScalar(baseScale);
 
-    // A generic VolturnUS-S-inspired semisubmersible is generated because the
-    // OpenFAST deck describes physics, not a render mesh.
-    const waterline = 0;
-    const platform = new THREE.Group();
-    [0, 120, 240].forEach((angle) => {
-      const a = THREE.MathUtils.degToRad(angle);
-      const x = Math.cos(a) * 34, z = Math.sin(a) * 34;
-      const column = cylinder(7.5, 10, Math.max(24, platformDraft * 1.3), dark, 16);
-      column.position.set(x, -10, z);
-      platform.add(column);
-      const brace = cylinder(2.2, 2.2, 35, dark, 10);
-      brace.rotation.z = Math.PI / 2;
-      brace.rotation.y = -a;
-      brace.position.set(x * .5, -6, z * .5);
-      platform.add(brace);
-    });
-    platform.add(cylinder(6.5, 7, 25, dark, 18));
-    platform.position.y = waterline;
-    turbine.add(platform);
+    if (floater?.vertices?.length && floater?.indices?.length) {
+      const platformGeometry = new THREE.BufferGeometry();
+      platformGeometry.setAttribute('position', new THREE.Float32BufferAttribute(floater.vertices.flat(), 3));
+      platformGeometry.setIndex(floater.indices);
+      platformGeometry.computeVertexNormals();
+      turbine.add(new THREE.Mesh(platformGeometry, dark));
+    }
 
     const tower = cylinder(2.4, 7, hubHeight, material, 24);
     tower.position.y = hubHeight / 2 + 8;
