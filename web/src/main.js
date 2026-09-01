@@ -33,14 +33,15 @@ const workspaceSource = document.querySelector('#workspaceSource');
 const workspaceSourceMeta = document.querySelector('#workspaceSourceMeta');
 const variableList = document.querySelector('#variableList');
 const emptyVariableBtn = document.querySelector('#emptyVariableBtn');
-const sampleCount = document.querySelector('#sampleCount');
-const sampleSeed = document.querySelector('#sampleSeed');
-const seedField = document.querySelector('#seedField');
-const rangeSamplingConfig = document.querySelector('#rangeSamplingConfig');
-const csvConfig = document.querySelector('#csvConfig');
+const caseTable = document.querySelector('#caseTable');
+const caseTableHead = document.querySelector('#caseTableHead');
+const caseTableBody = document.querySelector('#caseTableBody');
+const emptyCaseBtn = document.querySelector('#emptyCaseBtn');
+const selectAllCases = document.querySelector('#selectAllCases');
+const clearSelectedCasesBtn = document.querySelector('#clearSelectedCasesBtn');
+const clearCasesBtn = document.querySelector('#clearCasesBtn');
 const csvInput = document.querySelector('#csvInput');
-const csvFileName = document.querySelector('#csvFileName');
-const csvFileMeta = document.querySelector('#csvFileMeta');
+const csvStatus = document.querySelector('#csvStatus');
 const workspaceResult = document.querySelector('#workspaceResult');
 const modalFootnote = document.querySelector('#modalFootnote');
 const createWorkspaceBtn = document.querySelector('#createWorkspaceBtn');
@@ -64,13 +65,14 @@ let activeTelemetry = { rpm: 0, power: 0, wind: 11.4 };
 let targetTelemetry = { rpm: 0, power: 0, wind: 11.4 };
 let running = false;
 let currentRunId = null;
-let samplingMethod = 'uniform';
-let csvText = '';
 let advancedModelEntry = null;
 let editingStudyId = null;
 let savedStudies = [];
 let sourceModels = [];
 let parameterControlSequence = 0;
+let variableSequence = 0;
+let caseSequence = 0;
+let caseRows = [];
 const parameterCache = new Map();
 
 function workspaceUrl(path = '') {
@@ -344,21 +346,6 @@ function renderBinaryWindLeaf(container) {
   copy.append(name, meta); leaf.append(icon, copy); container.append(leaf);
 }
 
-function renderRelatedTurbSimInput(container) {
-  const selected = activeWind?.turbsim_inputs?.find(item => item.path === activeWind.selected_turbsim_input);
-  if (!selected) return;
-  const branch = document.createElement('div'); branch.className = 'wind-related-file';
-  const button = document.createElement('button'); button.type = 'button'; button.className = 'file-node';
-  button.setAttribute('aria-expanded', 'false');
-  const icon = document.createElement('span'); icon.className = 'file-node-icon'; icon.textContent = 'IN';
-  const copy = document.createElement('span'); copy.className = 'file-node-copy';
-  const name = document.createElement('span'); name.className = 'file-node-name'; name.textContent = selected.name; name.title = selected.path;
-  const meta = document.createElement('span'); meta.className = 'file-node-meta'; meta.textContent = `TURBSIM INPUT · ${(selected.size / 1024).toFixed(1)} KB`;
-  const details = document.createElement('div'); details.className = 'file-node-results'; details.hidden = true;
-  copy.append(name, meta); button.append(icon, copy); branch.append(button, details); container.append(branch);
-  button.onclick = () => toggleFile({ path: selected.path, name: selected.name }, button, details);
-}
-
 function renderTurbSimSection(host) {
   host.innerHTML = '';
   if (!activeWind?.active) return;
@@ -400,7 +387,6 @@ function renderTurbSimSection(host) {
     }
   };
   section.append(header, message, label, select);
-  renderRelatedTurbSimInput(section);
   renderBinaryWindLeaf(section);
   host.append(section);
 }
@@ -447,7 +433,8 @@ function renderFileTree(files) {
     icon.className = 'file-node-icon'; icon.textContent = node.name.split('.').pop().slice(0, 3).toUpperCase();
     const copy = document.createElement('span'); copy.className = 'file-node-copy';
     const name = document.createElement('span'); name.className = 'file-node-name'; name.textContent = node.name; name.title = node.path;
-    const meta = document.createElement('span'); meta.className = 'file-node-meta'; meta.textContent = `${node.parameter_count} PARSED · ${(node.size / 1024).toFixed(1)} KB`;
+    const meta = document.createElement('span'); meta.className = 'file-node-meta';
+    meta.textContent = `${node.source_kind === 'turbsim' ? 'TURBSIM · ' : ''}${node.parameter_count} PARSED · ${(node.size / 1024).toFixed(1)} KB`;
     const details = document.createElement('div');
     details.id = `linked-file-${index}`;
     details.className = 'file-node-results';
@@ -482,7 +469,7 @@ async function loadWorkspace(workspaceId) {
     renderFileTree(model.files);
     visual.rebuild(model.geometry);
     const activePath = model.files[0]?.path;
-    logMessage('INFO', `Loaded ${activeWorkspace.name}: ${model.files.length} linked files from ${modelName}`);
+    logMessage('INFO', `Loaded ${activeWorkspace.name}: ${model.files.length} input files from ${modelName}`);
     updateTelemetry({ rpm: 0, power: 0, wind: 11.4 });
     request(`${workspaceUrl('/file')}?path=${encodeURIComponent(activePath)}`).then(payload => {
       const wind = numberFrom(payload.data, ['HWindSpeed', 'WindSpeed'], 11.4);
@@ -514,18 +501,116 @@ function updateEmptyVariableState() {
   emptyVariableBtn.hidden = variableList.children.length > 0;
 }
 
-function suggestedRange(value) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return ['', ''];
-  const magnitude = Math.abs(value) || 1;
-  const spread = magnitude * .1;
-  return [Number((value - spread).toPrecision(8)), Number((value + spread).toPrecision(8))];
+function selectedParameter(row) {
+  const option = row.querySelector('[data-role="parameter"]').selectedOptions[0];
+  let originalValue = null;
+  try { originalValue = JSON.parse(option?.dataset.value ?? 'null'); } catch { originalValue = null; }
+  return { kind: option?.dataset.kind || '', originalValue };
+}
+
+function collectVariables() {
+  return [...variableList.querySelectorAll('.variable-row')].map(row => {
+    const parameter = row.querySelector('[data-role="parameter"]');
+    const selected = selectedParameter(row);
+    return {
+      id: row.dataset.variableId,
+      name: row.querySelector('[data-role="name"]').value.trim(),
+      file: row.querySelector('[data-role="file"]').value,
+      key: parameter.value,
+      kind: selected.kind,
+      originalValue: selected.originalValue,
+    };
+  });
+}
+
+function updateCaseControls() {
+  const selectedCount = caseRows.filter(row => row.selected).length;
+  emptyCaseBtn.hidden = caseRows.length > 0;
+  clearCasesBtn.disabled = caseRows.length === 0;
+  clearSelectedCasesBtn.disabled = selectedCount === 0;
+  selectAllCases.checked = caseRows.length > 0 && selectedCount === caseRows.length;
+  selectAllCases.indeterminate = selectedCount > 0 && selectedCount < caseRows.length;
+}
+
+function caseCell(variable, value, row) {
+  let control;
+  if (variable.kind === 'boolean') {
+    control = document.createElement('select');
+    control.add(new Option('True', 'true'));
+    control.add(new Option('False', 'false'));
+    control.value = String(value).toLowerCase() === 'true' ? 'true' : 'false';
+    control.onchange = () => { row.values[variable.id] = control.value === 'true'; };
+  } else {
+    control = document.createElement('input');
+    control.type = variable.kind === 'number' || variable.kind === 'integer' ? 'number' : 'text';
+    if (variable.kind === 'number') control.step = 'any';
+    if (variable.kind === 'integer') control.step = '1';
+    control.value = value ?? '';
+    control.oninput = () => { row.values[variable.id] = control.value; control.classList.remove('invalid'); };
+  }
+  control.setAttribute('aria-label', `${variable.name || variable.key} value`);
+  return control;
+}
+
+function renderCaseTable() {
+  const variables = collectVariables();
+  caseTableHead.querySelectorAll('th[data-variable-id]').forEach(cell => cell.remove());
+  variables.forEach(variable => {
+    const heading = document.createElement('th');
+    heading.dataset.variableId = variable.id;
+    heading.textContent = variable.name || variable.key || 'Unnamed variable';
+    heading.title = `${variable.file} · ${variable.key || 'Select a parameter'}`;
+    caseTableHead.append(heading);
+  });
+  caseTableBody.innerHTML = '';
+  caseRows.forEach((row, index) => {
+    const tr = document.createElement('tr');
+    tr.dataset.caseId = row.id;
+    const selectCell = document.createElement('td');
+    selectCell.className = 'case-select-cell';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox'; checkbox.checked = row.selected; checkbox.setAttribute('aria-label', `Select case ${index + 1}`);
+    checkbox.onchange = () => { row.selected = checkbox.checked; updateCaseControls(); };
+    selectCell.append(checkbox);
+    const numberCell = document.createElement('td');
+    numberCell.className = 'case-number-cell'; numberCell.textContent = index + 1;
+    tr.append(selectCell, numberCell);
+    variables.forEach(variable => {
+      const td = document.createElement('td');
+      td.dataset.variableId = variable.id;
+      td.append(caseCell(variable, row.values[variable.id], row));
+      tr.append(td);
+    });
+    caseTableBody.append(tr);
+  });
+  caseTable.style.setProperty('--case-columns', Math.max(1, variables.length));
+  updateCaseControls();
+}
+
+function addCase(values = null) {
+  const variables = collectVariables();
+  if (!variables.length || variables.some(variable => !variable.key)) return notify('Complete a variable binding first');
+  const previous = caseRows.at(-1);
+  const rowValues = {};
+  variables.forEach(variable => {
+    rowValues[variable.id] = values && Object.hasOwn(values, variable.id)
+      ? values[variable.id]
+      : previous ? previous.values[variable.id] : variable.originalValue;
+  });
+  caseRows.push({ id: `case-${++caseSequence}`, selected: false, values: rowValues });
+  renderCaseTable();
+}
+
+function resetCaseColumn(row) {
+  const variableId = row.dataset.variableId;
+  const { originalValue } = selectedParameter(row);
+  caseRows.forEach(caseRow => { caseRow.values[variableId] = originalValue; });
+  renderCaseTable();
 }
 
 async function populateParameterSelect(row, preferredKey = '') {
   const fileSelect = row.querySelector('[data-role="file"]');
   const parameterSelect = row.querySelector('[data-role="parameter"]');
-  const minInput = row.querySelector('[data-role="minimum"]');
-  const maxInput = row.querySelector('[data-role="maximum"]');
   parameterSelect.disabled = true;
   parameterSelect.innerHTML = '<option>Loading parameters…</option>';
   try {
@@ -547,19 +632,9 @@ async function populateParameterSelect(row, preferredKey = '') {
     if (preferredKey && parameters.some(parameter => parameter.key === preferredKey)) {
       parameterSelect.value = preferredKey;
     } else {
-      const firstNumeric = parameters.find(parameter => ['number', 'integer'].includes(parameter.kind));
-      if (firstNumeric) parameterSelect.value = firstNumeric.key;
+      parameterSelect.value = parameters[0].key;
     }
     parameterSelect.disabled = false;
-    const selected = parameterSelect.selectedOptions[0];
-    const current = JSON.parse(selected.dataset.value ?? 'null');
-    const [minimum, maximum] = suggestedRange(current);
-    minInput.value = minimum;
-    maxInput.value = maximum;
-    const numeric = ['number', 'integer'].includes(selected.dataset.kind);
-    minInput.disabled = !numeric;
-    maxInput.disabled = !numeric;
-    minInput.title = maxInput.title = numeric ? '' : 'Use CSV sampling for non-numeric parameters';
   } catch (error) {
     parameterSelect.innerHTML = `<option>${error.message}</option>`;
   }
@@ -568,48 +643,39 @@ async function populateParameterSelect(row, preferredKey = '') {
 function handleParameterChange(row) {
   const parameterSelect = row.querySelector('[data-role="parameter"]');
   const alias = row.querySelector('[data-role="name"]');
-  const selected = parameterSelect.selectedOptions[0];
   if (!alias.dataset.edited) alias.value = parameterSelect.value;
-  let current = null;
-  try { current = JSON.parse(selected.dataset.value ?? 'null'); } catch { current = null; }
-  const [minimum, maximum] = suggestedRange(current);
-  const numeric = ['number', 'integer'].includes(selected.dataset.kind);
-  const minInput = row.querySelector('[data-role="minimum"]');
-  const maxInput = row.querySelector('[data-role="maximum"]');
-  minInput.disabled = !numeric; maxInput.disabled = !numeric;
-  minInput.value = numeric ? minimum : ''; maxInput.value = numeric ? maximum : '';
-  minInput.title = maxInput.title = numeric ? '' : 'Use CSV sampling for non-numeric parameters';
+  resetCaseColumn(row);
 }
 
 function addVariable(preferredFile = null, preferredKey = '') {
   if (!activeModel?.files?.length) return notify('Select a model first');
   const row = document.createElement('div');
   row.className = 'variable-row';
+  row.dataset.variableId = `variable-${++variableSequence}`;
 
   const name = document.createElement('input');
   name.dataset.role = 'name'; name.placeholder = 'variable_name'; name.setAttribute('aria-label', 'Variable name');
-  name.oninput = () => { name.dataset.edited = 'true'; };
+  name.oninput = () => { name.dataset.edited = 'true'; renderCaseTable(); };
   const file = document.createElement('select');
   file.dataset.role = 'file'; file.setAttribute('aria-label', 'Input file');
-  activeModel.files.forEach(node => file.add(new Option(node.name, node.path)));
+  activeModel.files.forEach(node => file.add(new Option(
+    node.source_kind === 'turbsim' ? `${node.name} · TurbSim` : node.name,
+    node.path,
+  )));
   const desiredFile = preferredFile && activeModel.files.some(node => node.path === preferredFile)
     ? preferredFile : activeModel.files[0].path;
   file.value = desiredFile;
   const parameter = document.createElement('select');
   parameter.dataset.role = 'parameter'; parameter.setAttribute('aria-label', 'Exact parameter');
-  const range = document.createElement('div'); range.className = 'range-pair';
-  const minimum = document.createElement('input');
-  minimum.type = 'number'; minimum.step = 'any'; minimum.dataset.role = 'minimum'; minimum.placeholder = 'min'; minimum.setAttribute('aria-label', 'Minimum');
-  const separator = document.createElement('span'); separator.textContent = '—';
-  const maximum = document.createElement('input');
-  maximum.type = 'number'; maximum.step = 'any'; maximum.dataset.role = 'maximum'; maximum.placeholder = 'max'; maximum.setAttribute('aria-label', 'Maximum');
-  range.append(minimum, separator, maximum);
   const remove = document.createElement('button');
   remove.type = 'button'; remove.className = 'remove-variable'; remove.textContent = '×'; remove.title = 'Remove variable'; remove.setAttribute('aria-label', 'Remove variable');
-  remove.onclick = () => { row.remove(); updateEmptyVariableState(); };
+  remove.onclick = () => {
+    caseRows.forEach(caseRow => { delete caseRow.values[row.dataset.variableId]; });
+    row.remove(); updateEmptyVariableState(); renderCaseTable();
+  };
   file.onchange = async () => { name.dataset.edited = ''; await populateParameterSelect(row); handleParameterChange(row); };
   parameter.onchange = () => handleParameterChange(row);
-  row.append(name, file, parameter, range, remove);
+  row.append(name, file, parameter, remove);
   variableList.append(row);
   updateEmptyVariableState();
   row.parameterReady = populateParameterSelect(row, preferredKey).then(() => handleParameterChange(row));
@@ -621,17 +687,19 @@ function resetAdvancedForm() {
   editingStudyId = null;
   studySelect.value = '';
   variableList.innerHTML = '';
+  caseRows = [];
   workspaceResult.hidden = true;
   modalFootnote.hidden = false;
-  csvText = ''; csvInput.value = '';
-  csvFileName.textContent = 'Choose a CSV file';
-  csvFileMeta.textContent = 'Header names must match the variable names above.';
+  csvInput.value = ''; csvStatus.hidden = true; csvStatus.innerHTML = '';
   const stem = activeModel?.entry?.split('/').pop().replace(/\.fst$/i, '') || 'OpenFAST';
   workspaceName.value = `${stem} variable study`;
   workspaceSource.textContent = activeModel?.entry?.split('/').pop() || 'No model selected';
   workspaceSource.title = activeModel?.entry || '';
-  workspaceSourceMeta.textContent = `${activeModel?.files?.length || 0} linked inputs in ${activeWorkspace?.name || 'this workspace'}.`;
+  const turbsimCount = activeModel?.files?.filter(node => node.source_kind === 'turbsim').length || 0;
+  const linkedCount = (activeModel?.files?.length || 0) - turbsimCount;
+  workspaceSourceMeta.textContent = `${linkedCount} linked input${linkedCount === 1 ? '' : 's'}${turbsimCount ? ` + ${turbsimCount} TurbSim input${turbsimCount === 1 ? '' : 's'}` : ''} in ${activeWorkspace?.name || 'this workspace'}.`;
   addVariable(activeNode?.path || activeModel?.files?.[0]?.path);
+  renderCaseTable();
   createWorkspaceBtn.querySelector('span').textContent = 'SAVE STUDY';
 }
 
@@ -648,7 +716,7 @@ async function loadStudies() {
   savedStudies = payload.studies;
   studySelect.innerHTML = '<option value="">New study</option>';
   savedStudies.forEach(study => studySelect.add(new Option(
-    `${study.name} · ${study.sample_count} samples`, study.study_id,
+    `${study.name} · ${study.sample_count} cases`, study.study_id,
   )));
 }
 
@@ -659,67 +727,59 @@ async function openSavedStudy(studyId) {
   advancedModelEntry = activeModel.entry;
   workspaceName.value = study.name;
   workspaceSource.textContent = activeModel.entry.split('/').pop();
-  workspaceSourceMeta.textContent = `${activeModel.files.length} linked inputs in ${activeWorkspace.name}.`;
+  const turbsimCount = activeModel.files.filter(node => node.source_kind === 'turbsim').length;
+  const linkedCount = activeModel.files.length - turbsimCount;
+  workspaceSourceMeta.textContent = `${linkedCount} linked input${linkedCount === 1 ? '' : 's'}${turbsimCount ? ` + ${turbsimCount} TurbSim input${turbsimCount === 1 ? '' : 's'}` : ''} in ${activeWorkspace.name}.`;
   variableList.innerHTML = '';
+  caseRows = [];
   for (const variable of study.variables) {
     const row = addVariable(variable.file, variable.key);
     if (!row) continue;
     await row.parameterReady;
     row.querySelector('[data-role="name"]').value = variable.name;
     row.querySelector('[data-role="name"]').dataset.edited = 'true';
-    const minimum = row.querySelector('[data-role="minimum"]');
-    const maximum = row.querySelector('[data-role="maximum"]');
-    minimum.value = variable.minimum ?? '';
-    maximum.value = variable.maximum ?? '';
   }
-  setSamplingMethod(study.sampling.method);
-  sampleCount.value = study.sampling.count;
-  sampleSeed.value = study.sampling.seed ?? 42;
-  if (study.sampling.method === 'csv') {
-    const headings = study.variables.map(variable => variable.name);
-    const rows = study.sampling.samples.map(sample => headings.map(name => JSON.stringify(sample[name] ?? '')).join(','));
-    csvText = `${headings.join(',')}\n${rows.join('\n')}\n`;
-    csvFileName.textContent = `${study.name}.csv`;
-    csvFileMeta.textContent = `${study.sampling.count.toLocaleString()} saved data rows.`;
-  }
-  updateSamplingSummary();
+  const variables = collectVariables();
+  caseRows = study.samples.map(sample => ({
+    id: `case-${++caseSequence}`,
+    selected: false,
+    values: Object.fromEntries(variables.map(variable => [variable.id, sample[variable.name]])),
+  }));
+  csvInput.value = ''; csvStatus.hidden = true; csvStatus.innerHTML = '';
+  renderCaseTable();
   workspaceResult.hidden = false;
   modalFootnote.hidden = true;
-  workspaceResult.innerHTML = `<span>● SAVED</span><small>${study.variables.length} variables · ${study.sampling.count} samples</small><a href="${workspaceUrl(`/studies/${encodeURIComponent(study.study_id)}/download`)}" download>DOWNLOAD JSON</a>`;
+  workspaceResult.innerHTML = `<span>● SAVED</span><small>${study.variables.length} variables · ${study.samples.length} cases</small><a href="${workspaceUrl(`/studies/${encodeURIComponent(study.study_id)}/download`)}" download>DOWNLOAD JSON</a>`;
   createWorkspaceBtn.querySelector('span').textContent = 'UPDATE STUDY';
 }
 
-function setSamplingMethod(method) {
-  samplingMethod = method;
-  document.querySelectorAll('[data-sampling]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.sampling === method)));
-  const csv = method === 'csv';
-  rangeSamplingConfig.hidden = csv; csvConfig.hidden = !csv;
-  seedField.hidden = method !== 'random';
-  updateSamplingSummary();
-}
-
-function updateSamplingSummary() {
-  const count = Math.max(0, Number(sampleCount.value) || 0);
-  document.querySelector('#sampleSummaryTitle').textContent = `${count.toLocaleString()} ${samplingMethod} sample${count === 1 ? '' : 's'}`;
-  document.querySelector('#sampleSummaryCopy').textContent = samplingMethod === 'random'
-    ? `Reproducible with seed ${sampleSeed.value || 0}.` : 'Includes both range endpoints.';
-  document.querySelector('#sampleMethodIcon').textContent = samplingMethod === 'random' ? '⌁' : '↔';
-}
-
-function collectVariables() {
-  return [...variableList.querySelectorAll('.variable-row')].map(row => {
-    const parameter = row.querySelector('[data-role="parameter"]');
-    const minimum = row.querySelector('[data-role="minimum"]');
-    const maximum = row.querySelector('[data-role="maximum"]');
-    return {
-      name: row.querySelector('[data-role="name"]').value.trim(),
-      file: row.querySelector('[data-role="file"]').value,
-      key: parameter.value,
-      kind: parameter.selectedOptions[0]?.dataset.kind,
-      minimum: minimum.disabled || minimum.value === '' ? null : Number(minimum.value),
-      maximum: maximum.disabled || maximum.value === '' ? null : Number(maximum.value),
-    };
-  });
+function collectCases(variables) {
+  const samples = [];
+  for (let rowIndex = 0; rowIndex < caseRows.length; rowIndex += 1) {
+    const caseRow = caseRows[rowIndex];
+    const sample = {};
+    for (const variable of variables) {
+      const value = caseRow.values[variable.id];
+      let normalized = value;
+      let valid = value !== null && value !== undefined && String(value).trim() !== '';
+      if (valid && variable.kind === 'number') {
+        normalized = Number(value); valid = Number.isFinite(normalized);
+      } else if (valid && variable.kind === 'integer') {
+        normalized = Number(value); valid = Number.isInteger(normalized);
+      } else if (valid && variable.kind === 'boolean') {
+        valid = typeof value === 'boolean';
+      }
+      const control = caseTableBody.querySelector(`tr[data-case-id="${caseRow.id}"] td[data-variable-id="${variable.id}"] input, tr[data-case-id="${caseRow.id}"] td[data-variable-id="${variable.id}"] select`);
+      control?.classList.toggle('invalid', !valid);
+      if (!valid) {
+        notify(`Complete ${variable.name} in case row ${rowIndex + 1}`);
+        return null;
+      }
+      sample[variable.name] = normalized;
+    }
+    samples.push(sample);
+  }
+  return samples;
 }
 
 async function saveStudy(event) {
@@ -728,14 +788,10 @@ async function saveStudy(event) {
   if (!workspaceName.value.trim()) return notify('Enter a workspace name');
   if (!variables.length) return notify('Add at least one variable');
   if (variables.some(variable => !variable.name || !variable.key)) return notify('Complete every variable binding');
-  if (samplingMethod !== 'csv' && variables.some(variable => !['number', 'integer'].includes(variable.kind))) {
-    return notify('Use CSV sampling for text or boolean variables');
-  }
-  if (samplingMethod === 'csv' && !csvText) return notify('Choose a CSV file');
-
-  const sampling = samplingMethod === 'csv'
-    ? { method: 'csv', csv_text: csvText }
-    : { method: samplingMethod, count: Number(sampleCount.value), seed: samplingMethod === 'random' ? Number(sampleSeed.value) : null };
+  if (new Set(variables.map(variable => variable.name)).size !== variables.length) return notify('Variable names must be unique');
+  if (!caseRows.length) return notify('Add at least one complete case');
+  const samples = collectCases(variables);
+  if (!samples) return;
   createWorkspaceBtn.disabled = true;
   createWorkspaceBtn.querySelector('span').textContent = 'SAVING…';
   try {
@@ -744,15 +800,15 @@ async function saveStudy(event) {
       method: editingStudyId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: workspaceName.value.trim(),
-        variables: variables.map(({ kind, ...variable }) => variable), sampling,
+        variables: variables.map(({ id, kind, originalValue, ...variable }) => variable), samples,
       }),
     });
     editingStudyId = result.study_id;
     await loadStudies();
     studySelect.value = editingStudyId;
     workspaceResult.hidden = false; modalFootnote.hidden = true;
-    workspaceResult.innerHTML = `<span>● SAVED</span><small>${result.variable_count} variables · ${result.sample_count} samples</small><a href="${safeText(result.download_url)}" download>DOWNLOAD JSON</a>`;
-    logMessage('INFO', `Saved variable study ${result.study_id} with ${result.sample_count} samples`);
+    workspaceResult.innerHTML = `<span>● SAVED</span><small>${result.variable_count} variables · ${result.sample_count} cases</small><a href="${safeText(result.download_url)}" download>DOWNLOAD JSON</a>`;
+    logMessage('INFO', `Saved variable study ${result.study_id} with ${result.sample_count} cases`);
     notify('Variable study saved');
   } catch (error) {
     notify(error.message);
@@ -909,21 +965,67 @@ document.querySelector('#newStudyBtn').onclick = resetAdvancedForm;
 runHistorySelect.onclick = event => event.stopPropagation();
 runHistorySelect.onkeydown = event => event.stopPropagation();
 runHistorySelect.onchange = () => showHistoricalRun(runHistorySelect.value).catch(error => notify(error.message));
-document.querySelectorAll('[data-sampling]').forEach(button => { button.onclick = () => setSamplingMethod(button.dataset.sampling); });
+document.querySelector('#addCaseBtn').onclick = () => addCase();
+emptyCaseBtn.onclick = () => addCase();
+selectAllCases.onchange = () => {
+  caseRows.forEach(row => { row.selected = selectAllCases.checked; });
+  renderCaseTable();
+};
+clearSelectedCasesBtn.onclick = () => {
+  caseRows = caseRows.filter(row => !row.selected);
+  renderCaseTable();
+};
+clearCasesBtn.onclick = () => { caseRows = []; renderCaseTable(); };
 document.querySelector('#csvChooseBtn').onclick = () => csvInput.click();
 csvInput.onchange = async () => {
   const file = csvInput.files?.[0];
   if (!file) return;
   if (file.size > 10 * 1024 * 1024) {
-    csvInput.value = ''; csvText = ''; return notify('CSV must be smaller than 10 MB');
+    csvInput.value = ''; return notify('CSV must be smaller than 10 MB');
   }
-  csvText = await file.text();
-  const rowCount = Math.max(0, csvText.trim().split(/\r?\n/).length - 1);
-  csvFileName.textContent = file.name;
-  csvFileMeta.textContent = `${rowCount.toLocaleString()} data row${rowCount === 1 ? '' : 's'} · ${(file.size / 1024).toFixed(1)} KB`;
+  const variables = collectVariables();
+  if (!variables.length || variables.some(variable => !variable.name || !variable.key)) {
+    csvInput.value = ''; return notify('Complete every variable binding before uploading CSV');
+  }
+  if (new Set(variables.map(variable => variable.name)).size !== variables.length) {
+    csvInput.value = ''; return notify('Variable names must be unique');
+  }
+  try {
+    const result = await request(workspaceUrl('/studies/csv-import'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        variables: variables.map(({ id, kind, originalValue, ...variable }) => variable),
+        csv_text: await file.text(),
+      }),
+    });
+    if ((caseRows.length + result.samples.length) > 100000
+      || (caseRows.length + result.samples.length) * variables.length > 1_000_000) {
+      return notify('Appending this CSV would exceed the case-table limits');
+    }
+    result.samples.forEach(sample => {
+      caseRows.push({
+        id: `case-${++caseSequence}`,
+        selected: false,
+        values: Object.fromEntries(variables.map(variable => [variable.id, sample[variable.name]])),
+      });
+    });
+    renderCaseTable();
+    csvStatus.hidden = false;
+    csvStatus.innerHTML = '';
+    const summary = document.createElement('b');
+    summary.textContent = `${file.name}: appended ${result.imported_count.toLocaleString()} case${result.imported_count === 1 ? '' : 's'}`;
+    const detail = document.createElement('small');
+    detail.textContent = result.skipped_count
+      ? `${result.skipped_count.toLocaleString()} invalid row${result.skipped_count === 1 ? '' : 's'} skipped. ${result.errors.map(error => `Row ${error.row}, ${error.column}: ${error.message}`).join(' · ')}`
+      : 'All non-blank rows were imported.';
+    csvStatus.append(summary, detail);
+    notify(result.imported_count ? 'CSV cases appended' : 'CSV contained no valid cases');
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    csvInput.value = '';
+  }
 };
-sampleCount.oninput = updateSamplingSummary;
-sampleSeed.oninput = updateSamplingSummary;
 workspaceForm.addEventListener('submit', saveStudy);
 
 function populateSources() {
@@ -1009,5 +1111,5 @@ async function boot() {
 
 requestAnimationFrame(renderTelemetry);
 applyTheme(document.documentElement.dataset.theme, false);
-setSamplingMethod('uniform');
+renderCaseTable();
 boot();

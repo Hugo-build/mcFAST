@@ -90,7 +90,7 @@
             <span>ADVANCED FEATURES</span>
             <button class="advanced-launcher" id="advancedBtn" type="button">
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h7M13 5.5h4M3 10h2m3 0h9M3 14.5h8m3 0h3M10 3v5m-4-1v6m7-1v5"/></svg>
-              <span><b>VARIABLE STUDY</b><small>Workspace &amp; sampling</small></span>
+              <span><b>VARIABLE STUDY</b><small>Explicit case values</small></span>
               <i>›</i>
             </button>
           </div>
@@ -126,7 +126,7 @@
           <div>
             <span class="modal-eyebrow">ADVANCED FEATURES / VARIABLE STUDY</span>
             <h2 id="advancedTitle">Configure a variable study</h2>
-            <p>Save reproducible sampling setups inside the active workspace project.</p>
+            <p>Define variables and save explicit study cases inside the active workspace project.</p>
           </div>
           <button class="modal-close" id="advancedClose" type="button" aria-label="Close">×</button>
         </header>
@@ -154,31 +154,36 @@
               <div><span class="step-number">01</span><div><h3>Variables</h3><p>Select a linked file, then bind its exact parameter key.</p></div></div>
               <button class="secondary-btn" id="addVariableBtn" type="button"><span>＋</span> ADD VARIABLE</button>
             </div>
-            <div class="variable-columns" aria-hidden="true"><span>VARIABLE NAME</span><span>INPUT FILE</span><span>EXACT PARAMETER</span><span>RANGE</span><span></span></div>
+            <div class="variable-columns" aria-hidden="true"><span>VARIABLE NAME</span><span>INPUT FILE</span><span>EXACT PARAMETER</span><span></span></div>
             <div class="variable-list" id="variableList"></div>
             <button class="empty-variable" id="emptyVariableBtn" type="button">
               <span>＋</span><b>Add the first variable</b><small>Choose from any input file linked to this model.</small>
             </button>
           </section>
 
-          <section class="modal-section sampling-section">
+          <section class="modal-section case-section">
             <div class="modal-section-heading">
-              <div><span class="step-number">02</span><div><h3>Sample source</h3><p>Upload explicit cases or generate values across each range.</p></div></div>
+              <div><span class="step-number">02</span><div><h3>Cases</h3><p>Enter one complete set of selected-variable values per row.</p></div></div>
             </div>
-            <div class="sampling-tabs" role="tablist" aria-label="Sampling method">
-              <button type="button" role="tab" data-sampling="uniform" aria-selected="true"><b>UNIFORM</b><small>Evenly spaced values</small></button>
-              <button type="button" role="tab" data-sampling="random" aria-selected="false"><b>RANDOM</b><small>Seeded random values</small></button>
-              <button type="button" role="tab" data-sampling="csv" aria-selected="false"><b>UPLOAD CSV</b><small>One case per row</small></button>
+            <div class="case-toolbar">
+              <div class="case-toolbar-primary">
+                <button class="secondary-btn" id="addCaseBtn" type="button"><span>＋</span> ADD ROW</button>
+                <input id="csvInput" type="file" accept=".csv,text/csv" hidden />
+                <button class="secondary-btn" id="csvChooseBtn" type="button"><span>⇧</span> UPLOAD CSV</button>
+              </div>
+              <div class="case-toolbar-clear">
+                <button class="secondary-btn" id="clearSelectedCasesBtn" type="button" disabled>CLEAR SELECTED ROWS</button>
+                <button class="secondary-btn danger-btn" id="clearCasesBtn" type="button" disabled>CLEAR TABLE</button>
+              </div>
             </div>
-            <div class="sampling-config" id="rangeSamplingConfig">
-              <label class="field"><span>NUMBER OF SAMPLES</span><input id="sampleCount" type="number" min="1" max="100000" value="10" /></label>
-              <label class="field seed-field" id="seedField" hidden><span>RANDOM SEED</span><input id="sampleSeed" type="number" value="42" /></label>
-              <div class="sample-summary"><span id="sampleMethodIcon">↔</span><p><b id="sampleSummaryTitle">10 uniform samples</b><small id="sampleSummaryCopy">Includes both range endpoints.</small></p></div>
+            <div class="case-table-wrap" id="caseTableWrap">
+              <table class="case-table" id="caseTable">
+                <thead><tr id="caseTableHead"><th class="case-select-cell"><input id="selectAllCases" type="checkbox" aria-label="Select all case rows" /></th><th class="case-number-cell">#</th></tr></thead>
+                <tbody id="caseTableBody"></tbody>
+              </table>
+              <button class="empty-case" id="emptyCaseBtn" type="button"><span>＋</span><b>Add the first case</b><small>The first row starts with values from the active model.</small></button>
             </div>
-            <div class="csv-config" id="csvConfig" hidden>
-              <input id="csvInput" type="file" accept=".csv,text/csv" hidden />
-              <button class="csv-drop" id="csvChooseBtn" type="button"><span>⇧</span><p><b id="csvFileName">Choose a CSV file</b><small id="csvFileMeta">Header names must match the variable names above.</small></p><i>BROWSE</i></button>
-            </div>
+            <div class="csv-status" id="csvStatus" hidden></div>
           </section>
         </div>
 

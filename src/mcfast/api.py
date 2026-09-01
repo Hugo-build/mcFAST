@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 import hashlib
 from io import StringIO
 import json
+import math
 import os
 from pathlib import Path
-import random
 import re
 import shutil
 import threading
@@ -15,14 +15,14 @@ from typing import Any
 import uuid
 
 from fastapi import FastAPI, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .models import discover_models, model_geometry, referenced_files, safe_path
 from .parser import parse_file, update_file
 from .runner import find_openfast, find_turbsim, run_openfast, run_turbsim, turbsim_version
-from .wind import find_inflow_file, managed_bts_reference, project_path, wind_status
+from .wind import discover_turbsim_inputs, find_inflow_file, managed_bts_reference, project_path, wind_status
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +32,7 @@ NATIVE_LIBRARY_SUFFIXES = {".dll", ".dylib", ".so"}
 WORKSPACE_ID_RE = re.compile(r"[a-z0-9_-]+")
 RUN_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
-app = FastAPI(title="mcFAST API", version="0.2.0")
+app = FastAPI(title="mcFAST API", version="0.3.0")
 
 
 class UpdateRequest(BaseModel):
@@ -54,21 +54,17 @@ class WorkspaceVariable(BaseModel):
     name: str
     file: str
     key: str
-    minimum: float | None = None
-    maximum: float | None = None
-
-
-class SamplingRequest(BaseModel):
-    method: str
-    count: int | None = None
-    seed: int | None = None
-    csv_text: str | None = None
 
 
 class StudyRequest(BaseModel):
     name: str
     variables: list[WorkspaceVariable]
-    sampling: SamplingRequest
+    samples: list[dict[str, Any]]
+
+
+class CsvImportRequest(BaseModel):
+    variables: list[WorkspaceVariable]
+    csv_text: str
 
 
 RUNS: dict[tuple[str, str], dict[str, Any]] = {}
@@ -309,109 +305,51 @@ def _ensure_example_workspace() -> None:
     _import_workspace(WorkspaceImportRequest(name="IEA 15 MW UMaineSemi", source_path=str(candidates[0])))
 
 
-def _coerce_sample(value: str, kind: str, column: str, row: int) -> Any:
+def _coerce_sample(value: Any, kind: str) -> Any:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise ValueError("Value is required")
     try:
         if kind == "boolean":
-            lowered = value.strip().lower()
+            if isinstance(value, bool):
+                return value
+            lowered = str(value).strip().lower()
             if lowered not in {"true", "false", "1", "0"}:
                 raise ValueError
             return lowered in {"true", "1"}
         if kind == "integer":
+            if isinstance(value, bool):
+                raise ValueError
             number = float(value)
-            if not number.is_integer():
+            if not math.isfinite(number) or not number.is_integer():
                 raise ValueError
             return int(number)
         if kind == "number":
-            return float(value)
+            if isinstance(value, bool):
+                raise ValueError
+            number = float(value)
+            if not math.isfinite(number):
+                raise ValueError
+            return number
+        if not isinstance(value, str):
+            raise ValueError
         return value
-    except ValueError as exc:
-        raise HTTPException(400, f"Invalid value for '{column}' in CSV row {row}") from exc
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Expected a valid {kind} value") from exc
 
 
-def _make_samples(variables: list[dict[str, Any]], sampling: SamplingRequest) -> list[dict[str, Any]]:
-    if sampling.method == "csv":
-        if not sampling.csv_text or not sampling.csv_text.strip():
-            raise HTTPException(400, "Choose a non-empty CSV file")
-        if len(sampling.csv_text.encode("utf-8")) > 10 * 1024 * 1024:
-            raise HTTPException(400, "CSV must be smaller than 10 MB")
-        reader = csv.DictReader(StringIO(sampling.csv_text.lstrip("\ufeff")))
-        headings = [heading.strip() for heading in (reader.fieldnames or []) if heading]
-        required = [variable["name"] for variable in variables]
-        missing = [name for name in required if name not in headings]
-        if missing:
-            raise HTTPException(400, f"CSV is missing column(s): {', '.join(missing)}")
-        rows = []
-        for index, raw in enumerate(reader, 2):
-            raw = {(key or "").strip(): value for key, value in raw.items()}
-            if not any((value or "").strip() for value in raw.values()):
-                continue
-            rows.append({
-                variable["name"]: _coerce_sample(
-                    raw.get(variable["name"], "") or "", variable["kind"], variable["name"], index
-                )
-                for variable in variables
-            })
-        if not rows:
-            raise HTTPException(400, "CSV contains no sample rows")
-        return rows
-
-    if sampling.method not in {"uniform", "random"}:
-        raise HTTPException(400, "Sampling method must be uniform, random, or csv")
-    count = sampling.count or 0
-    if count < 1 or count > 100000:
-        raise HTTPException(400, "Sample count must be between 1 and 100,000")
-    if count * len(variables) > 1_000_000:
-        raise HTTPException(400, "The sample set may contain at most 1,000,000 values")
-    for variable in variables:
-        if variable["kind"] not in {"number", "integer"}:
-            raise HTTPException(400, f"Use CSV sampling for non-numeric variable '{variable['name']}'")
-        if variable["minimum"] is None or variable["maximum"] is None:
-            raise HTTPException(400, f"Set a range for '{variable['name']}'")
-        if variable["minimum"] > variable["maximum"]:
-            raise HTTPException(400, f"Minimum exceeds maximum for '{variable['name']}'")
-
-    generator = random.Random(sampling.seed)
-    rows: list[dict[str, Any]] = []
-    for index in range(count):
-        row: dict[str, Any] = {}
-        for variable in variables:
-            low, high = variable["minimum"], variable["maximum"]
-            value = low if sampling.method == "uniform" and count == 1 else (
-                low + (high - low) * index / (count - 1)
-                if sampling.method == "uniform"
-                else generator.uniform(low, high)
-            )
-            if variable["kind"] == "integer":
-                value = round(value)
-            row[variable["name"]] = value
-        rows.append(row)
-    return rows
-
-
-def _study_path(workspace_id: str, study_id: str) -> Path:
-    if not WORKSPACE_ID_RE.fullmatch(study_id):
-        raise HTTPException(404, "Study not found")
-    target = (_workspace_dir(workspace_id) / "studies" / f"{study_id}.json").resolve()
-    studies_root = (_workspace_dir(workspace_id) / "studies").resolve()
-    if studies_root not in target.parents or not target.is_file():
-        raise HTTPException(404, "Study not found")
-    return target
-
-
-def _resolve_study(workspace_id: str, body: StudyRequest, study_id: str | None = None) -> dict[str, Any]:
+def _resolve_variables(workspace_id: str, variables: list[WorkspaceVariable]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     manifest = _workspace_manifest(workspace_id)
     project_root = _project_root(workspace_id)
     graph = referenced_files(project_root, manifest["entry"])
-    if not body.name.strip():
-        raise HTTPException(400, "Enter a study name")
-    if not body.variables:
+    if not variables:
         raise HTTPException(400, "Add at least one variable")
-    if len(body.variables) > 200:
+    if len(variables) > 200:
         raise HTTPException(400, "A study supports at most 200 variables")
     allowed_files = {node["path"] for node in graph["files"]}
+    allowed_files.update(candidate["path"] for candidate in discover_turbsim_inputs(project_root))
     names: set[str] = set()
-    resolved_variables = []
-    for variable in body.variables:
+    resolved = []
+    for variable in variables:
         name = variable.name.strip()
         if not name:
             raise HTTPException(400, "Every variable needs a name")
@@ -427,17 +365,111 @@ def _resolve_study(workspace_id: str, body: StudyRequest, study_id: str | None =
         if len(matches) > 1:
             raise HTTPException(400, f"Parameter '{variable.key}' is ambiguous in {variable.file}")
         parameter = matches[0]
-        resolved_variables.append({
+        if parameter["kind"] == "keyword":
+            raise HTTPException(400, f"Keyword parameter '{variable.key}' cannot be varied")
+        resolved.append({
             "name": name,
             "file": variable.file,
             "key": variable.key,
             "original_value": parameter["value"],
             "kind": parameter["kind"],
             "description": parameter["description"],
-            "minimum": variable.minimum,
-            "maximum": variable.maximum,
         })
-    samples = _make_samples(resolved_variables, body.sampling)
+    return manifest, resolved
+
+
+def _validate_samples(variables: list[dict[str, Any]], samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not samples:
+        raise HTTPException(400, "Add at least one complete case")
+    if len(samples) > 100000:
+        raise HTTPException(400, "A study supports at most 100,000 cases")
+    if len(samples) * len(variables) > 1_000_000:
+        raise HTTPException(400, "The case table may contain at most 1,000,000 values")
+    normalized = []
+    for row_index, sample in enumerate(samples, 1):
+        if not isinstance(sample, dict):
+            raise HTTPException(400, f"Case row {row_index} must be an object")
+        row = {}
+        for variable in variables:
+            name = variable["name"]
+            try:
+                row[name] = _coerce_sample(sample.get(name), variable["kind"])
+            except ValueError as exc:
+                raise HTTPException(400, f"Invalid value for '{name}' in case row {row_index}: {exc}") from exc
+        normalized.append(row)
+    return normalized
+
+
+def _parse_csv_samples(variables: list[dict[str, Any]], csv_text: str) -> dict[str, Any]:
+    if not csv_text.strip():
+        raise HTTPException(400, "Choose a non-empty CSV file")
+    if len(csv_text.encode("utf-8")) > 10 * 1024 * 1024:
+        raise HTTPException(400, "CSV must be smaller than 10 MB")
+    try:
+        reader = csv.DictReader(StringIO(csv_text.lstrip("\ufeff")), strict=True)
+        headings = [(heading or "").strip() for heading in (reader.fieldnames or [])]
+    except csv.Error as exc:
+        raise HTTPException(400, f"CSV could not be parsed: {exc}") from exc
+    if not headings or not any(headings):
+        raise HTTPException(400, "CSV must contain a header row")
+    duplicates = sorted({heading for heading in headings if heading and headings.count(heading) > 1})
+    if duplicates:
+        raise HTTPException(400, f"CSV contains duplicate column(s): {', '.join(duplicates)}")
+    required = [variable["name"] for variable in variables]
+    missing = [name for name in required if name not in headings]
+    if missing:
+        raise HTTPException(400, f"CSV is missing column(s): {', '.join(missing)}")
+
+    samples: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    skipped_count = 0
+    try:
+        for row_number, raw in enumerate(reader, 2):
+            raw = {(key or "").strip(): value for key, value in raw.items()}
+            if not any(str(value or "").strip() for value in raw.values()):
+                continue
+            row = {}
+            row_error = None
+            for variable in variables:
+                name = variable["name"]
+                try:
+                    row[name] = _coerce_sample(raw.get(name), variable["kind"])
+                except ValueError as exc:
+                    row_error = {"row": row_number, "column": name, "message": str(exc)}
+                    break
+            if row_error:
+                skipped_count += 1
+                if len(errors) < 20:
+                    errors.append(row_error)
+            else:
+                samples.append(row)
+    except csv.Error as exc:
+        raise HTTPException(400, f"CSV could not be parsed: {exc}") from exc
+    if len(samples) > 100000 or len(samples) * len(variables) > 1_000_000:
+        raise HTTPException(400, "Imported CSV exceeds the case-table limits")
+    return {
+        "samples": samples,
+        "imported_count": len(samples),
+        "skipped_count": skipped_count,
+        "errors": errors,
+    }
+
+
+def _study_path(workspace_id: str, study_id: str) -> Path:
+    if not WORKSPACE_ID_RE.fullmatch(study_id):
+        raise HTTPException(404, "Study not found")
+    target = (_workspace_dir(workspace_id) / "studies" / f"{study_id}.json").resolve()
+    studies_root = (_workspace_dir(workspace_id) / "studies").resolve()
+    if studies_root not in target.parents or not target.is_file():
+        raise HTTPException(404, "Study not found")
+    return target
+
+
+def _resolve_study(workspace_id: str, body: StudyRequest, study_id: str | None = None) -> dict[str, Any]:
+    if not body.name.strip():
+        raise HTTPException(400, "Enter a study name")
+    manifest, resolved_variables = _resolve_variables(workspace_id, body.variables)
+    samples = _validate_samples(resolved_variables, body.samples)
     now = _utc_now().isoformat()
     studies_dir = _workspace_dir(workspace_id) / "studies"
     studies_dir.mkdir(exist_ok=True)
@@ -450,7 +482,7 @@ def _resolve_study(workspace_id: str, body: StudyRequest, study_id: str | None =
         study_id = f"{_slug(body.name, 'variable-study')}-{uuid.uuid4().hex[:6]}"
         target = studies_dir / f"{study_id}.json"
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "study_id": study_id,
         "workspace_id": workspace_id,
         "name": body.name.strip(),
@@ -458,25 +490,33 @@ def _resolve_study(workspace_id: str, body: StudyRequest, study_id: str | None =
         "updated_at": now,
         "workspace_entry": manifest["entry"],
         "variables": resolved_variables,
-        "sampling": {
-            "method": body.sampling.method,
-            "count": len(samples),
-            "seed": body.sampling.seed if body.sampling.method == "random" else None,
-            "samples": samples,
-        },
+        "samples": samples,
     }
     _json_write(target, payload)
     return payload
 
 
+def _normalize_study(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    normalized["schema_version"] = 2
+    normalized["variables"] = [
+        {key: value for key, value in variable.items() if key not in {"minimum", "maximum"}}
+        for variable in payload.get("variables", [])
+    ]
+    normalized["samples"] = payload.get("samples", payload.get("sampling", {}).get("samples", []))
+    normalized.pop("sampling", None)
+    return normalized
+
+
 def _study_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_study(payload)
     return {
-        "study_id": payload["study_id"],
-        "name": payload["name"],
-        "updated_at": payload["updated_at"],
-        "variable_count": len(payload.get("variables", [])),
-        "sample_count": payload.get("sampling", {}).get("count", 0),
-        "download_url": f"/api/workspaces/{payload['workspace_id']}/studies/{payload['study_id']}/download",
+        "study_id": normalized["study_id"],
+        "name": normalized["name"],
+        "updated_at": normalized["updated_at"],
+        "variable_count": len(normalized.get("variables", [])),
+        "sample_count": len(normalized.get("samples", [])),
+        "download_url": f"/api/workspaces/{normalized['workspace_id']}/studies/{normalized['study_id']}/download",
     }
 
 
@@ -727,6 +767,11 @@ def workspace_model(workspace_id: str) -> dict[str, Any]:
     project_root = _project_root(workspace_id)
     try:
         graph = referenced_files(project_root, manifest["entry"])
+        known_paths = {node["path"] for node in graph["files"]}
+        graph["files"].extend(
+            candidate for candidate in discover_turbsim_inputs(project_root)
+            if candidate["path"] not in known_paths
+        )
         graph["geometry"] = model_geometry(project_root, manifest["entry"])
         graph["workspace"] = _workspace_summary(manifest)
         return graph
@@ -828,9 +873,16 @@ def create_study(workspace_id: str, body: StudyRequest) -> dict[str, Any]:
     return _study_summary(_resolve_study(workspace_id, body))
 
 
+@app.post("/api/workspaces/{workspace_id}/studies/csv-import")
+def import_study_csv(workspace_id: str, body: CsvImportRequest) -> dict[str, Any]:
+    _, variables = _resolve_variables(workspace_id, body.variables)
+    return _parse_csv_samples(variables, body.csv_text)
+
+
 @app.get("/api/workspaces/{workspace_id}/studies/{study_id}")
 def study(workspace_id: str, study_id: str) -> dict[str, Any]:
-    return json.loads(_study_path(workspace_id, study_id).read_text(encoding="utf-8"))
+    payload = json.loads(_study_path(workspace_id, study_id).read_text(encoding="utf-8"))
+    return _normalize_study(payload)
 
 
 @app.put("/api/workspaces/{workspace_id}/studies/{study_id}")
@@ -839,9 +891,14 @@ def update_study(workspace_id: str, study_id: str, body: StudyRequest) -> dict[s
 
 
 @app.get("/api/workspaces/{workspace_id}/studies/{study_id}/download")
-def download_study(workspace_id: str, study_id: str) -> FileResponse:
+def download_study(workspace_id: str, study_id: str) -> Response:
     target = _study_path(workspace_id, study_id)
-    return FileResponse(target, filename=f"{study_id}.json")
+    payload = _normalize_study(json.loads(target.read_text(encoding="utf-8")))
+    return Response(
+        json.dumps(payload, indent=2) + "\n",
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{study_id}.json"'},
+    )
 
 
 @app.get("/api/workspaces/{workspace_id}/runs")

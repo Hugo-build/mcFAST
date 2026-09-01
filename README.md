@@ -79,14 +79,19 @@ available.
 ## Variable-study workspaces
 
 Open **Advanced features → Variable study** on the right side of the viewport
-to prepare parameter sweeps without modifying the source model. Each variable
-is bound to a linked input file and an exact scalar parameter name. Cases can
-come from an uploaded CSV or from uniform/seeded-random numeric ranges.
+to prepare explicit study cases without modifying the source model. Each
+variable is bound to a linked input file and an exact scalar parameter name.
+Selected variables become columns in an editable case table, so numeric,
+integer, Boolean, and text values can be entered directly. CSV files with
+matching variable headers append their valid rows to the existing table.
+Discovered TurbSim `.in` files appear alongside the linked OpenFAST inputs and
+their scalar parameters can be used as study variables in the same way.
 
 Creating the workspace copies the model's common source tree (including
 ancillary blade, airfoil, wind, controller, and hydrodynamic files) under
-`workspaces/<workspace-id>/model/`. The bindings and generated sample rows are
-saved in `variable-set.json`; the modal also provides a direct JSON download.
+`workspaces/<workspace-id>/project/`. Variable bindings and case rows are saved
+under `workspaces/<workspace-id>/studies/`; the modal also provides a direct
+JSON download.
 
 ## TurbSim wind fields
 

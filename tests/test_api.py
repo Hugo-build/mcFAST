@@ -16,7 +16,13 @@ def _source_project(root: Path, name: str = "Example") -> Path:
     shared.mkdir()
     entry = case / f"{name}.fst"
     entry.write_text('"../shared/AeroDyn.dat" AeroFile - linked module\n10.0 TMax - duration\n')
-    (shared / "AeroDyn.dat").write_text("10.0 AirDens - air density\n2 NumBlades - blade count\n")
+    (shared / "AeroDyn.dat").write_text(
+        "10.0 AirDens - air density\n"
+        "2 NumBlades - blade count\n"
+        "True UseTipLoss - tip-loss switch\n"
+        '"steady" OperationMode - operating mode\n'
+        "default WakeMod - keyword sentinel\n"
+    )
     return entry
 
 
@@ -61,10 +67,8 @@ def _study_payload(name: str = "Blade sweep") -> dict:
             "name": "blade_count",
             "file": "source/shared/AeroDyn.dat",
             "key": "NumBlades",
-            "minimum": 2,
-            "maximum": 4,
         }],
-        "sampling": {"method": "uniform", "count": 3},
+        "samples": [{"blade_count": 2}, {"blade_count": 3}, {"blade_count": 4}],
     }
 
 
@@ -170,15 +174,129 @@ def test_multiple_studies_can_be_reopened_and_updated(monkeypatch, tmp_path: Pat
         second = client.post(base, json=_study_payload("Second sweep")).json()
         assert len(client.get(base).json()["studies"]) == 2
         reopened = client.get(f"{base}/{first['study_id']}").json()
-        assert reopened["sampling"]["samples"] == [
+        assert reopened["schema_version"] == 2
+        assert reopened["samples"] == [
             {"blade_count": 2}, {"blade_count": 3}, {"blade_count": 4}
         ]
         replacement = _study_payload("Updated sweep")
-        replacement["sampling"]["count"] = 2
+        replacement["samples"] = [{"blade_count": 2}, {"blade_count": 4}]
         updated = client.put(f"{base}/{first['study_id']}", json=replacement)
         assert updated.status_code == 200
         assert updated.json()["sample_count"] == 2
         assert client.get(second["download_url"]).status_code == 200
+
+
+def test_study_accepts_mixed_types_and_rejects_invalid_cases(monkeypatch, tmp_path: Path) -> None:
+    source = _source_project(tmp_path / "source")
+    monkeypatch.setattr(api, "MODEL_ROOT", tmp_path / "models")
+    monkeypatch.setattr(api, "WORKSPACE_ROOT", tmp_path / "workspaces")
+
+    with TestClient(api.app) as client:
+        workspace = _import(client, source)
+        base = f"/api/workspaces/{workspace['workspace_id']}/studies"
+        variables = [
+            {"name": "density", "file": "source/shared/AeroDyn.dat", "key": "AirDens"},
+            {"name": "blades", "file": "source/shared/AeroDyn.dat", "key": "NumBlades"},
+            {"name": "tip_loss", "file": "source/shared/AeroDyn.dat", "key": "UseTipLoss"},
+            {"name": "mode", "file": "source/shared/AeroDyn.dat", "key": "OperationMode"},
+        ]
+        created = client.post(base, json={
+            "name": "Mixed values",
+            "variables": variables,
+            "samples": [{"density": "1.225", "blades": "3", "tip_loss": "false", "mode": "parked"}],
+        })
+        assert created.status_code == 201, created.text
+        saved = client.get(f"{base}/{created.json()['study_id']}").json()
+        assert saved["samples"] == [{"density": 1.225, "blades": 3, "tip_loss": False, "mode": "parked"}]
+
+        blank = client.post(base, json={"name": "Blank", "variables": variables, "samples": [
+            {"density": 1.0, "blades": 3, "tip_loss": True, "mode": ""}
+        ]})
+        assert blank.status_code == 400
+        assert "case row 1" in blank.json()["detail"]
+
+        non_finite = client.post(base, json={"name": "NaN", "variables": variables[:1], "samples": [{"density": "nan"}]})
+        assert non_finite.status_code == 400
+        duplicate = client.post(base, json={
+            "name": "Duplicate", "variables": [variables[0], {**variables[1], "name": "density"}],
+            "samples": [{"density": 1}],
+        })
+        assert duplicate.status_code == 400
+
+
+def test_csv_import_appends_only_valid_typed_rows(monkeypatch, tmp_path: Path) -> None:
+    source = _source_project(tmp_path / "source")
+    monkeypatch.setattr(api, "MODEL_ROOT", tmp_path / "models")
+    monkeypatch.setattr(api, "WORKSPACE_ROOT", tmp_path / "workspaces")
+
+    with TestClient(api.app) as client:
+        workspace = _import(client, source)
+        url = f"/api/workspaces/{workspace['workspace_id']}/studies/csv-import"
+        variables = [
+            {"name": "blade_count", "file": "source/shared/AeroDyn.dat", "key": "NumBlades"},
+            {"name": "mode", "file": "source/shared/AeroDyn.dat", "key": "OperationMode"},
+        ]
+        imported = client.post(url, json={
+            "variables": variables,
+            "csv_text": 'blade_count,mode,ignored\n3,"parked, safe",x\n2.5,bad,x\n4,,x\n\n',
+        })
+        assert imported.status_code == 200, imported.text
+        assert imported.json()["samples"] == [{"blade_count": 3, "mode": "parked, safe"}]
+        assert imported.json()["imported_count"] == 1
+        assert imported.json()["skipped_count"] == 2
+        assert imported.json()["errors"][0]["row"] == 3
+
+        missing = client.post(url, json={"variables": variables, "csv_text": "blade_count\n3\n"})
+        assert missing.status_code == 400
+        assert "missing column(s): mode" in missing.json()["detail"]
+
+        many_errors = client.post(url, json={
+            "variables": variables,
+            "csv_text": "blade_count,mode\n" + "\n".join("invalid,ok" for _ in range(25)),
+        }).json()
+        assert many_errors["skipped_count"] == 25
+        assert len(many_errors["errors"]) == 20
+
+
+def test_legacy_study_is_normalized_without_rewriting(monkeypatch, tmp_path: Path) -> None:
+    source = _source_project(tmp_path / "source")
+    monkeypatch.setattr(api, "MODEL_ROOT", tmp_path / "models")
+    monkeypatch.setattr(api, "WORKSPACE_ROOT", tmp_path / "workspaces")
+
+    with TestClient(api.app) as client:
+        workspace = _import(client, source)
+        workspace_id = workspace["workspace_id"]
+        study_id = "legacy-study"
+        study_path = api.WORKSPACE_ROOT / workspace_id / "studies" / f"{study_id}.json"
+        legacy = {
+            "schema_version": 1,
+            "study_id": study_id,
+            "workspace_id": workspace_id,
+            "name": "Legacy sweep",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "workspace_entry": workspace["entry"],
+            "variables": [{
+                "name": "blade_count", "file": "source/shared/AeroDyn.dat", "key": "NumBlades",
+                "kind": "integer", "original_value": 2, "description": "blade count", "minimum": 2, "maximum": 4,
+            }],
+            "sampling": {"method": "uniform", "count": 3, "seed": None, "samples": [
+                {"blade_count": 2}, {"blade_count": 3}, {"blade_count": 4},
+            ]},
+        }
+        study_path.write_text(json.dumps(legacy))
+        base = f"/api/workspaces/{workspace_id}/studies"
+
+        assert client.get(base).json()["studies"][0]["sample_count"] == 3
+        normalized = client.get(f"{base}/{study_id}").json()
+        assert normalized["schema_version"] == 2
+        assert "sampling" not in normalized
+        assert "minimum" not in normalized["variables"][0]
+        assert normalized["samples"] == legacy["sampling"]["samples"]
+        assert json.loads(study_path.read_text())["schema_version"] == 1
+        downloaded = client.get(f"{base}/{study_id}/download").json()
+        assert downloaded["schema_version"] == 2
+        assert downloaded["samples"] == legacy["sampling"]["samples"]
 
 
 def test_workspace_run_history_survives_memory_reset(monkeypatch, tmp_path: Path) -> None:
@@ -248,6 +366,24 @@ def test_wind_configuration_discovers_input_and_classifies_manual_bts_as_externa
         initial = client.get(f"{base}/wind").json()
         assert initial["mode"] == "unconfigured"
         assert initial["turbsim_inputs"][0]["path"] == "source/shared/Wind/Case.in"
+        model = client.get(f"{base}/model").json()
+        turbsim_node = next(item for item in model["files"] if item["path"] == "source/shared/Wind/Case.in")
+        assert turbsim_node["source_kind"] == "turbsim"
+        assert turbsim_node["parameter_count"] == 2
+
+        study = client.post(f"{base}/studies", json={
+            "name": "TurbSim wind speeds",
+            "variables": [{
+                "name": "reference_wind",
+                "file": "source/shared/Wind/Case.in",
+                "key": "URef",
+            }],
+            "samples": [{"reference_wind": 8}, {"reference_wind": 12.5}],
+        })
+        assert study.status_code == 201, study.text
+        saved_study = client.get(f"{base}/studies/{study.json()['study_id']}").json()
+        assert saved_study["variables"][0]["file"] == "source/shared/Wind/Case.in"
+        assert saved_study["samples"] == [{"reference_wind": 8.0}, {"reference_wind": 12.5}]
 
         configured = client.put(
             f"{base}/wind",

@@ -44,10 +44,13 @@ def discover_turbsim_inputs(root: Path) -> list[dict[str, Any]]:
             continue
         relative = path.relative_to(root).as_posix()
         output = path.with_suffix(".bts")
+        parsed = parse_file(path)
         candidates.append({
             "path": relative,
             "name": path.name,
-            "size": path.stat().st_size,
+            "size": parsed["size"],
+            "parameter_count": len(parsed["parameters"]),
+            "source_kind": "turbsim",
             "output_path": output.relative_to(root).as_posix(),
         })
     return candidates
