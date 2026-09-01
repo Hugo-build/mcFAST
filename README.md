@@ -17,6 +17,8 @@ cd web && npm install && npm run build && cd ..
 uv run mcfast
 ```
 
+[](doc/figs/screenshot_mcfast_UI.png)
+
 Open <http://127.0.0.1:8000>. The model fetchers extract only the OpenFAST
 subtrees from pinned official releases. The IEA Wind 15 MW fetcher uses v1.1.17
 and includes the VolturnUS-S/UMaineSemi input deck. The IEA Wind 22 MW fetcher
