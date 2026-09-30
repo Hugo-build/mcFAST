@@ -211,6 +211,8 @@ def model_geometry(root: Path, entry_relative: str) -> dict[str, Any]:
     return {
         "hubHeight": max(20.0, hub_height),
         "bladeLength": max(5.0, blade_length),
+        "platformReferenceZ": number(("PtfmRefzt",), 0.0),
+        "azimuthBlade1Up": number(("AzimB1Up",), 0.0),
         "overhang": number(("OverHang", "Overhang"), 10.0),
         "floater": floater,
         "source": "OpenFAST parameters",

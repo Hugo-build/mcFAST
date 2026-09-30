@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from .models import discover_models, model_geometry, referenced_files, safe_path
 from .parser import parse_file, update_file
+from .playback import read_playback
 from .runner import find_openfast, find_turbsim, run_openfast, run_turbsim, turbsim_version
 from .wind import discover_turbsim_inputs, find_inflow_file, managed_bts_reference, project_path, wind_status
 
@@ -613,6 +614,7 @@ def _execute_run(workspace_id: str, run_id: str, model_path: Path, executable: s
                     "turbsim_version": turbsim_version(turbsim_executable),
                     "turbsim_return_code": 0,
                 })
+            geometry = model_geometry(_project_root(workspace_id), manifest["entry"])
             _set_run(workspace_id, run_id, phase="openfast")
             return_code, run_dir = run_openfast(
                 model_path,
@@ -625,6 +627,7 @@ def _execute_run(workspace_id: str, run_id: str, model_path: Path, executable: s
                     "workspace_entry": manifest["entry"],
                     "phase": "complete" if generated or wind_payload["valid"] else "failed",
                     "wind": wind_metadata,
+                    "geometry": geometry,
                 },
                 reuse_run_dir=True,
                 append_console=True,
@@ -969,6 +972,26 @@ def start_workspace_run(workspace_id: str) -> dict[str, Any]:
 @app.get("/api/workspaces/{workspace_id}/runs/{run_id}")
 def workspace_run_status(workspace_id: str, run_id: str, offset: int = Query(0, ge=0)) -> dict[str, Any]:
     return _run_payload(workspace_id, run_id, offset)
+
+
+@app.get("/api/workspaces/{workspace_id}/runs/{run_id}/playback")
+def workspace_run_playback(workspace_id: str, run_id: str) -> dict[str, Any]:
+    state = _run_payload(workspace_id, run_id)
+    if state["status"] != "completed":
+        return {"available": False, "reason": "Playback is available after a successful run completes."}
+    manifest = state["manifest"] or {}
+    try:
+        payload = read_playback(_run_dir(workspace_id, run_id), state["model"] or "")
+    except ValueError as exc:
+        return {"available": False, "reason": str(exc)}
+    geometry = manifest.get("geometry")
+    payload["geometry_source"] = "saved" if geometry else "current"
+    if geometry is None:
+        workspace = _workspace_manifest(workspace_id)
+        root = _project_root(workspace_id)
+        geometry = model_geometry(root, workspace["entry"])
+    payload["geometry"] = geometry
+    return payload
 
 
 @app.get("/api/workspaces/{workspace_id}/runs/{run_id}/files/{filename:path}")

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { platformTransform } from './playback.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 export function createScene(canvas) {
@@ -41,7 +42,19 @@ export function createScene(canvas) {
   grid.position.y = -42;
   scene.add(grid);
 
+  const visibility = { tower: true, nacelle: true, hub: true, blades: true, platform: true, grid: true };
+  const parts = { grid };
+  function setVisibility(part, visible) {
+    if (!Object.hasOwn(visibility, part)) return;
+    visibility[part] = Boolean(visible);
+    if (parts[part]) parts[part].visible = visibility[part];
+  }
+
   let turbine = null;
+  let platformPivot = null;
+  let rotor = null;
+  let referenceZ = 0;
+  let blade1Up = 0;
   let baseScale = 1;
   // Basic materials are intentionally unlit: the geometry has solid colors
   // without gradients, reflections, transparency, or lighting-dependent shade.
@@ -120,21 +133,27 @@ export function createScene(canvas) {
     controls.update();
   }
 
-  function rebuild({ hubHeight = 150, bladeLength = 117, floater = null } = {}) {
+  function rebuild({ hubHeight = 150, bladeLength = 117, floater = null, platformReferenceZ = 0, azimuthBlade1Up = 0 } = {}) {
     if (turbine) {
       turbine.traverse(child => child.geometry?.dispose());
-      scene.remove(turbine);
+      scene.remove(platformPivot);
     }
+    delete parts.platform;
+    referenceZ = platformReferenceZ;
+    blade1Up = azimuthBlade1Up;
+    platformPivot = new THREE.Group();
     turbine = new THREE.Group();
+    platformPivot.add(turbine);
     baseScale = 230 / Math.max(hubHeight + bladeLength, 180);
-    turbine.scale.setScalar(baseScale);
+    platformPivot.scale.setScalar(baseScale);
 
     if (floater?.vertices?.length && floater?.indices?.length) {
       const platformGeometry = new THREE.BufferGeometry();
       platformGeometry.setAttribute('position', new THREE.Float32BufferAttribute(floater.vertices.flat(), 3));
       platformGeometry.setIndex(floater.indices);
       platformGeometry.computeVertexNormals();
-      turbine.add(new THREE.Mesh(platformGeometry, dark));
+      parts.platform = new THREE.Mesh(platformGeometry, dark);
+      turbine.add(parts.platform);
     }
 
     const tower = cylinder(2.4, 7, hubHeight, material, 24);
@@ -147,7 +166,7 @@ export function createScene(canvas) {
     hub.position.set(-6, hubHeight + 8, 0);
     turbine.add(hub);
 
-    const rotor = new THREE.Group();
+    rotor = new THREE.Group();
     rotor.position.copy(hub.position);
     for (let i = 0; i < 3; i++) {
       const blade = new THREE.Mesh(new THREE.CylinderGeometry(.45, 2.3, bladeLength, 9), material);
@@ -156,11 +175,24 @@ export function createScene(canvas) {
       blade.position.applyAxisAngle(new THREE.Vector3(0, 0, 1), THREE.MathUtils.degToRad(i * 120));
       rotor.add(blade);
     }
+    Object.assign(parts, { tower, nacelle, hub, blades: rotor });
+    Object.entries(visibility).forEach(([part, visible]) => setVisibility(part, visible));
     rotor.rotation.y = Math.PI / 2;
     turbine.add(rotor);
-    turbine.position.set(0, -42, 0);
-    scene.add(turbine);
+    turbine.position.set(0, -referenceZ, 0);
+    platformPivot.position.set(0, -42 + referenceZ * baseScale, 0);
+    scene.add(platformPivot);
     fitCameraToTurbine();
+  }
+
+  function applyFrame(frame = {}) {
+    const transform = platformTransform(frame);
+    platformPivot.position.copy(transform.position).multiplyScalar(baseScale);
+    platformPivot.position.y += -42 + referenceZ * baseScale;
+    platformPivot.quaternion.copy(transform.quaternion);
+    // Local +z maps to +scene x. The reflected scene basis reverses
+    // the downwind OpenFAST rotation, so apply negative azimuth here.
+    rotor.rotation.z = -THREE.MathUtils.degToRad((frame.Azimuth ?? blade1Up) - blade1Up);
   }
 
   canvas.addEventListener('contextmenu', event => event.preventDefault());
@@ -168,14 +200,12 @@ export function createScene(canvas) {
   addEventListener('resize', resize);
 
   rebuild();
-  function animate(time) {
+  function animate() {
     requestAnimationFrame(animate);
-    if (turbine) {
-      turbine.position.y = -42 + Math.sin(time * .0007) * .35;
-    }
+
     controls.update();
     renderer.render(scene, camera);
   }
   requestAnimationFrame(animate);
-  return { rebuild, setAccent, setBackground, setTheme, resetView: fitCameraToTurbine };
+  return { rebuild, setVisibility, applyFrame, setAccent, setBackground, setTheme, resetView: fitCameraToTurbine };
 }

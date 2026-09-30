@@ -78,9 +78,40 @@ press **RUN OPENFAST**, and expand **RESULTS / CONSOLE**. The console is streame
 while the process runs, and every saved result is linked when it becomes
 available.
 
+## Result playback
+
+Completed runs load paused in the 3D viewport. Use **Play/Pause**, **Replay**,
+the simulation-time slider, and the 0.25×–2× speed selector to inspect the
+recorded rotor azimuth and rigid platform motion. The clock and rotor speed,
+wind speed, generator power, and rotor torque readouts follow the same result
+frame. Motion uses physical scale; there is no artificial platform bobbing.
+
+Playback reads the main `.outb` (preferred) or `.out` file and requires finite
+azimuth values plus at least two increasing timestamps. Missing optional
+channels are identified beside the controls; their telemetry is unavailable,
+and missing platform motion contributes zero displacement or rotation. New
+runs save their geometry and platform reference point. Older runs display a
+notice that playback uses current workspace geometry.
+
+A reproducible first check is the IEA 15 MW UMaineSemi deck with `WindType = 1`,
+`HWindSpeed = 10`, and `TMax = 10` in an isolated workspace. Constant wind is
+only the test setup; other completed runs with the required channels also play.
+
+## Left feature panels
+
+The persistent icon bar switches between **Files**, **Geometry**, and
+**Variable Study**. Click the active icon to collapse the panel, or another
+icon to switch features. The workspace selector is shared across all panels.
+The study editor uses a wider panel on desktop and an overlay on small screens;
+unsaved values survive panel switches but reset when changing workspaces.
+
+Geometry lists generated turbine parts and the supported platform GDF source.
+Visibility checkboxes affect only the 3D display and persist through playback
+and scene rebuilds. Ocean and weather rendering are reserved for future work.
+
 ## Variable-study workspaces
 
-Open **Advanced features → Variable study** on the right side of the viewport
+Open **Variable Study** from the vertical feature bar on the left
 to prepare explicit study cases without modifying the source model. Each
 variable is bound to a linked input file and an exact scalar parameter name.
 Selected variables become columns in an editable case table, so numeric,
@@ -92,7 +123,7 @@ their scalar parameters can be used as study variables in the same way.
 Creating the workspace copies the model's common source tree (including
 ancillary blade, airfoil, wind, controller, and hydrodynamic files) under
 `workspaces/<workspace-id>/project/`. Variable bindings and case rows are saved
-under `workspaces/<workspace-id>/studies/`; the modal also provides a direct
+under `workspaces/<workspace-id>/studies/`; the study panel also provides a direct
 JSON download.
 
 ## TurbSim wind fields
@@ -138,6 +169,7 @@ workspace switches to external mode and runs OpenFAST without invoking TurbSim.
 - `PUT /api/workspaces/{workspace-id}/wind` selects a managed `.in` and updates `FileName_BTS`.
 - `POST /api/workspaces/{workspace-id}/runs` starts the TurbSim/OpenFAST pipeline in the background.
 - `GET /api/workspaces/{workspace-id}/runs/{run-id}?offset=…` returns incremental console output and state.
+- `GET /api/workspaces/{workspace-id}/runs/{run-id}/playback` returns availability, timestamps, channel values/units, missing channels, and playback geometry.
 
 The conservative parser does not rewrite tables or output-channel lists. That
 keeps round trips safe while table-aware editing can be added format by format.
@@ -146,7 +178,7 @@ keeps round trips safe while table-aware editing can be added format by format.
 
 ```bash
 uv run pytest
-cd web && npm run build
+cd web && npm test && npm run build
 ```
 
 The integration test uses the downloaded official IEA 15 MW VolturnUS-S deck;

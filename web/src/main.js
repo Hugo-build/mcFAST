@@ -1,5 +1,6 @@
 import './style.css';
 import { createScene } from './scene.js';
+import { createPlayback } from './playback.js';
 
 const workspaceSelect = document.querySelector('#workspaceSelect');
 const fileTree = document.querySelector('#fileTree');
@@ -26,7 +27,6 @@ const runBtn = document.querySelector('#runBtn');
 const runBtnLabel = document.querySelector('#runBtnLabel');
 const themeToggle = document.querySelector('#themeToggle');
 const themeLabel = document.querySelector('#themeLabel');
-const advancedModal = document.querySelector('#advancedModal');
 const workspaceForm = document.querySelector('#workspaceForm');
 const workspaceName = document.querySelector('#workspaceName');
 const workspaceSource = document.querySelector('#workspaceSource');
@@ -55,17 +55,74 @@ const sourcePath = document.querySelector('#sourcePath');
 const confirmImportBtn = document.querySelector('#confirmImportBtn');
 const visual = createScene(document.querySelector('#scene'));
 
+workspaceForm.inert = true;
+const featureButtons = [...document.querySelectorAll('[data-feature]')];
+let activeFeature = 'files';
+const geometryVisibility = { tower: true, nacelle: true, hub: true, blades: true, platform: true, grid: true };
+
+function selectFeature(feature, toggle = false) {
+  const collapsed = toggle && activeFeature === feature && !sidePanel.classList.contains('collapsed');
+  activeFeature = feature;
+  sidePanel.classList.toggle('collapsed', collapsed);
+  sidePanel.classList.toggle('study-active', feature === 'study');
+  sidePanel.inert = collapsed;
+  document.querySelector('#panelTitle').textContent = { files: 'WORKSPACE FILES', geometry: 'GEOMETRY', study: 'VARIABLE STUDY' }[feature];
+  for (const button of featureButtons) {
+    const selected = button.dataset.feature === feature && !collapsed;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+    button.setAttribute('aria-expanded', String(selected));
+    document.querySelector(`#${button.dataset.feature}Panel`).hidden = button.dataset.feature !== feature;
+  }
+  if (feature === 'study' && !collapsed && !workspaceForm.inert && activeModel && studyWorkspaceId !== activeWorkspace?.workspace_id) resetStudyForm();
+}
+
+function rebuildGeometry(geometry, context = 'Current workspace geometry') {
+  visual.rebuild(geometry);
+  document.querySelector('#geometryContext').textContent = context;
+  const list = document.querySelector('#geometryList');
+  list.replaceChildren();
+  const entries = [
+    ['tower', 'Tower', 'Generated from OpenFAST parameters'],
+    ['nacelle', 'Nacelle', 'Generated geometry'],
+    ['hub', 'Hub', 'Generated geometry'],
+    ['blades', 'Blades', 'Generated from OpenFAST parameters'],
+    ['platform', 'Floating platform', geometry?.floater ? `${geometry.floater.source} · ${geometry.floater.format}` : 'No supported platform geometry available'],
+    ['grid', 'Reference grid', 'Scene reference'],
+  ];
+  for (const [part, name, source] of entries) {
+    const label = document.createElement('label');
+    label.className = 'geometry-item';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = geometryVisibility[part];
+    checkbox.disabled = !geometry || (part === 'platform' && !geometry.floater);
+    if (checkbox.disabled) checkbox.checked = false;
+    checkbox.onchange = () => {
+      geometryVisibility[part] = checkbox.checked;
+      visual.setVisibility(part, checkbox.checked);
+    };
+    const copy = document.createElement('span');
+    const title = document.createElement('strong');
+    title.textContent = name;
+    const detail = document.createElement('small');
+    detail.textContent = source;
+    copy.append(title, detail);
+    label.append(checkbox, copy);
+    list.append(label);
+  }
+}
+
 const GAUGE_CIRC = 2 * Math.PI * 33;
 const RATED_RPM = 12.1;
 let activeModel = null;
 let activeWorkspace = null;
 let activeNode = null;
 let activeWind = null;
-let activeTelemetry = { rpm: 0, power: 0, wind: 11.4 };
-let targetTelemetry = { rpm: 0, power: 0, wind: 11.4 };
 let running = false;
 let currentRunId = null;
-let advancedModelEntry = null;
+let studyWorkspaceId = null;
+let studyGeneration = 0;
 let editingStudyId = null;
 let savedStudies = [];
 let sourceModels = [];
@@ -123,35 +180,108 @@ function fmtTime(seconds) {
   return `${String(minutes).padStart(2, '0')}:${remainder}`;
 }
 
-function numberFrom(data, keys, fallback) {
-  for (const key of keys) {
-    const value = data?.[key];
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
+function renderTelemetry(now) {
+  const seconds = lastPlaybackFrame === null ? 0 : (now - lastPlaybackFrame) / 1000;
+  lastPlaybackFrame = now;
+  if (playback) {
+    playback.advance(document.hidden ? 0 : seconds);
+    renderPlaybackFrame();
   }
-  return fallback;
-}
-
-function updateTelemetry({ rpm = targetTelemetry.rpm, power = targetTelemetry.power, wind = targetTelemetry.wind }) {
-  targetTelemetry = { rpm, power, wind };
-}
-
-function renderTelemetry() {
-  activeTelemetry.rpm += (targetTelemetry.rpm - activeTelemetry.rpm) * .08;
-  activeTelemetry.power += (targetTelemetry.power - activeTelemetry.power) * .08;
-  activeTelemetry.wind += (targetTelemetry.wind - activeTelemetry.wind) * .08;
-  if (Math.abs(activeTelemetry.rpm - targetTelemetry.rpm) < .02) activeTelemetry.rpm = targetTelemetry.rpm;
-  if (Math.abs(activeTelemetry.power - targetTelemetry.power) < 1) activeTelemetry.power = targetTelemetry.power;
-  if (Math.abs(activeTelemetry.wind - targetTelemetry.wind) < .01) activeTelemetry.wind = targetTelemetry.wind;
-
-  rpmValue.textContent = activeTelemetry.rpm.toFixed(1);
-  powerValue.textContent = `${Math.round(activeTelemetry.power).toLocaleString()} kW`;
-  windValue.textContent = `${activeTelemetry.wind.toFixed(1)} m/s`;
-  torqueValue.textContent = activeTelemetry.rpm > .05
-    ? `${Math.round((activeTelemetry.power * 1000) / (activeTelemetry.rpm * 2 * Math.PI / 60) / 1000).toLocaleString()} kNm`
-    : '— kNm';
-  gaugeFill.setAttribute('stroke-dashoffset', (GAUGE_CIRC * (1 - Math.min(1, Math.max(0, activeTelemetry.rpm / RATED_RPM)))).toFixed(1));
   requestAnimationFrame(renderTelemetry);
 }
+
+const playbackMessage = document.querySelector('#playbackMessage');
+const playbackControls = document.querySelector('#playbackControls');
+const playbackPlay = document.querySelector('#playbackPlay');
+const playbackSeek = document.querySelector('#playbackSeek');
+const playbackTime = document.querySelector('#playbackTime');
+const playbackSpeed = document.querySelector('#playbackSpeed');
+let playback = null;
+let playbackData = null;
+let playbackGeneration = 0;
+let lastPlaybackFrame = null;
+
+function clearResultTelemetry() {
+  rpmValue.textContent = '—';
+  powerValue.textContent = '— kW';
+  windValue.textContent = '— m/s';
+  torqueValue.textContent = '— kNm';
+  gaugeFill.setAttribute('stroke-dashoffset', String(GAUGE_CIRC));
+}
+
+function resetPlayback(message = 'Select a completed run for playback.') {
+  playbackGeneration++;
+  playback = null;
+  playbackData = null;
+  lastPlaybackFrame = null;
+  playbackControls.hidden = true;
+  playbackMessage.textContent = message;
+  rebuildGeometry(activeModel?.geometry);
+  clearResultTelemetry();
+  simClock.textContent = fmtTime(0);
+}
+
+function renderPlaybackFrame() {
+  const frame = playback.sample();
+  visual.applyFrame(frame);
+  rpmValue.textContent = frame.RotSpeed?.toFixed(1) ?? '—';
+  powerValue.textContent = frame.GenPwr === undefined ? '— kW' : `${Math.round(frame.GenPwr).toLocaleString()} kW`;
+  windValue.textContent = frame.Wind1VelX === undefined ? '— m/s' : `${frame.Wind1VelX.toFixed(1)} m/s`;
+  torqueValue.textContent = frame.RotTorq === undefined ? '— kNm' : `${frame.RotTorq.toFixed(1)} kNm`;
+  gaugeFill.setAttribute('stroke-dashoffset', String(GAUGE_CIRC * (1 - Math.min(1, Math.max(0, (frame.RotSpeed ?? 0) / RATED_RPM)))));
+  simClock.textContent = fmtTime(playback.time);
+  playbackSeek.value = playback.time;
+  playbackSeek.setAttribute('aria-valuetext', `${playback.time.toFixed(2)} seconds`);
+  playbackTime.textContent = `${playback.time.toFixed(2)} / ${playbackData.timestamps.at(-1).toFixed(2)} s`;
+  playbackPlay.textContent = playback.playing ? 'Pause' : 'Play';
+}
+
+async function loadPlayback(runId) {
+  resetPlayback('Loading completed results…');
+  const generation = playbackGeneration;
+  const url = workspaceUrl(`/runs/${encodeURIComponent(runId)}/playback`);
+  try {
+    const data = await request(url);
+    if (generation !== playbackGeneration) return;
+    if (!data.available) { playbackMessage.textContent = data.reason; return; }
+    playbackData = data;
+    playback = createPlayback(data);
+    rebuildGeometry(data.geometry, data.geometry_source === 'saved' ? 'Saved run geometry' : 'Current workspace geometry · older run');
+    playbackSeek.min = data.timestamps[0];
+    playbackSeek.max = data.timestamps.at(-1);
+    playbackSpeed.value = '1';
+    playbackControls.hidden = false;
+    const notes = ['Completed result playback'];
+    if (data.geometry_source === 'current') notes.push('Older run: using current workspace geometry');
+    if (data.missing_channels.length) notes.push(`Unavailable channels: ${data.missing_channels.join(', ')}. Missing platform motion uses zero.`);
+    playbackMessage.textContent = notes.join(' · ');
+    renderPlaybackFrame();
+  } catch (error) {
+    if (generation === playbackGeneration) playbackMessage.textContent = `Playback unavailable: ${error.message}`;
+  }
+}
+
+playbackPlay.onclick = () => {
+  if (!playback) return;
+  if (playback.playing) playback.pause(); else playback.play();
+  lastPlaybackFrame = null;
+  renderPlaybackFrame();
+};
+document.querySelector('#playbackReplay').onclick = () => {
+  if (!playback) return;
+  playback.seek(playbackData.timestamps[0]);
+  playback.play();
+  lastPlaybackFrame = null;
+  renderPlaybackFrame();
+};
+playbackSeek.oninput = () => {
+  if (!playback) return;
+  playback.seek(Number(playbackSeek.value));
+  lastPlaybackFrame = null;
+  renderPlaybackFrame();
+};
+playbackSpeed.onchange = () => playback?.setSpeed(Number(playbackSpeed.value));
+document.addEventListener('visibilitychange', () => { lastPlaybackFrame = null; });
 
 function inputValue(parameter, input) {
   if (parameter.kind === 'boolean') return input.value === 'true';
@@ -449,17 +579,23 @@ function renderFileTree(files) {
 }
 
 async function loadWorkspace(workspaceId) {
+  resetPlayback();
+  workspaceForm.inert = true;
+  studyGeneration++;
+  const generation = playbackGeneration;
   fileTree.innerHTML = '<div class="loading">WALKING REFERENCED OPENFAST FILES…</div>';
   try {
     const [model, wind] = await Promise.all([
       request(`/api/workspaces/${encodeURIComponent(workspaceId)}/model`),
       request(`/api/workspaces/${encodeURIComponent(workspaceId)}/wind`),
     ]);
+    if (generation !== playbackGeneration) return;
+    const workspaceChanged = activeWorkspace?.workspace_id !== model.workspace.workspace_id;
     activeWorkspace = model.workspace;
     activeModel = model;
     activeWind = wind;
     parameterCache.clear();
-    if (advancedModelEntry && advancedModelEntry !== model.entry) advancedModelEntry = null;
+
     const modelName = model.entry.split('/').pop();
     activeModelName.textContent = modelName;
     activeModelName.title = `${activeWorkspace.name}\nSource: ${activeWorkspace.source_path}`;
@@ -467,20 +603,19 @@ async function loadWorkspace(workspaceId) {
     viewportModelLabel.textContent = activeWorkspace.name.toUpperCase();
     fileCount.textContent = `${model.files.length} FILES`;
     renderFileTree(model.files);
-    visual.rebuild(model.geometry);
-    const activePath = model.files[0]?.path;
+    if (workspaceChanged) resetStudyForm();
+    workspaceForm.inert = false;
+    rebuildGeometry(model.geometry);
     logMessage('INFO', `Loaded ${activeWorkspace.name}: ${model.files.length} input files from ${modelName}`);
-    updateTelemetry({ rpm: 0, power: 0, wind: 11.4 });
-    request(`${workspaceUrl('/file')}?path=${encodeURIComponent(activePath)}`).then(payload => {
-      const wind = numberFrom(payload.data, ['HWindSpeed', 'WindSpeed'], 11.4);
-      updateTelemetry({ wind });
-      windValue.textContent = `${wind.toFixed(1)} m/s`;
-    }).catch(() => {});
     localStorage.setItem('mcfast-workspace', workspaceId);
     await Promise.all([loadStudies(), loadRunHistory()]);
+    if (generation === playbackGeneration && runHistorySelect.value) await showHistoricalRun(runHistorySelect.value);
   } catch (error) {
+    if (generation !== playbackGeneration) return;
     fileTree.innerHTML = `<div class="error">${error.message}</div>`;
     setStatus('error', 'API ERROR');
+  } finally {
+    if (generation === playbackGeneration) workspaceForm.inert = !activeModel;
   }
 }
 
@@ -641,6 +776,7 @@ async function populateParameterSelect(row, preferredKey = '') {
 }
 
 function handleParameterChange(row) {
+  if (!row.isConnected) return;
   const parameterSelect = row.querySelector('[data-role="parameter"]');
   const alias = row.querySelector('[data-role="name"]');
   if (!alias.dataset.edited) alias.value = parameterSelect.value;
@@ -675,15 +811,25 @@ function addVariable(preferredFile = null, preferredKey = '') {
   };
   file.onchange = async () => { name.dataset.edited = ''; await populateParameterSelect(row); handleParameterChange(row); };
   parameter.onchange = () => handleParameterChange(row);
-  row.append(name, file, parameter, remove);
+  for (const [control, title] of [[name, 'VARIABLE NAME'], [file, 'INPUT FILE'], [parameter, 'EXACT PARAMETER']]) {
+    const label = document.createElement('label');
+    label.className = 'field';
+    const caption = document.createElement('span');
+    caption.textContent = title;
+    label.append(caption, control);
+    row.append(label);
+  }
+  row.append(remove);
   variableList.append(row);
   updateEmptyVariableState();
   row.parameterReady = populateParameterSelect(row, preferredKey).then(() => handleParameterChange(row));
   return row;
 }
 
-function resetAdvancedForm() {
-  advancedModelEntry = activeModel?.entry ?? null;
+function resetStudyForm() {
+  studyGeneration++;
+  createWorkspaceBtn.disabled = false;
+  studyWorkspaceId = activeWorkspace?.workspace_id ?? null;
   editingStudyId = null;
   studySelect.value = '';
   variableList.innerHTML = '';
@@ -703,16 +849,11 @@ function resetAdvancedForm() {
   createWorkspaceBtn.querySelector('span').textContent = 'SAVE STUDY';
 }
 
-function openAdvanced() {
-  if (!activeModel) return notify('Wait for a model to load');
-  if (advancedModelEntry !== activeModel.entry) resetAdvancedForm();
-  advancedModal.showModal();
-  window.setTimeout(() => workspaceName.focus(), 0);
-}
-
 async function loadStudies() {
   if (!activeWorkspace) return;
+  const workspaceId = activeWorkspace.workspace_id;
   const payload = await request(workspaceUrl('/studies'));
+  if (workspaceId !== activeWorkspace?.workspace_id) return;
   savedStudies = payload.studies;
   studySelect.innerHTML = '<option value="">New study</option>';
   savedStudies.forEach(study => studySelect.add(new Option(
@@ -721,10 +862,13 @@ async function loadStudies() {
 }
 
 async function openSavedStudy(studyId) {
-  if (!studyId) return resetAdvancedForm();
+  if (!studyId) return resetStudyForm();
+  const generation = ++studyGeneration;
+  const workspaceId = activeWorkspace.workspace_id;
   const study = await request(workspaceUrl(`/studies/${encodeURIComponent(studyId)}`));
+  if (generation !== studyGeneration || workspaceId !== activeWorkspace?.workspace_id) return;
   editingStudyId = study.study_id;
-  advancedModelEntry = activeModel.entry;
+  studyWorkspaceId = activeWorkspace.workspace_id;
   workspaceName.value = study.name;
   workspaceSource.textContent = activeModel.entry.split('/').pop();
   const turbsimCount = activeModel.files.filter(node => node.source_kind === 'turbsim').length;
@@ -736,6 +880,7 @@ async function openSavedStudy(studyId) {
     const row = addVariable(variable.file, variable.key);
     if (!row) continue;
     await row.parameterReady;
+    if (generation !== studyGeneration || workspaceId !== activeWorkspace?.workspace_id) return;
     row.querySelector('[data-role="name"]').value = variable.name;
     row.querySelector('[data-role="name"]').dataset.edited = 'true';
   }
@@ -784,8 +929,10 @@ function collectCases(variables) {
 
 async function saveStudy(event) {
   event.preventDefault();
+  if (!activeWorkspace || workspaceForm.inert) return;
+  const generation = studyGeneration;
   const variables = collectVariables();
-  if (!workspaceName.value.trim()) return notify('Enter a workspace name');
+  if (!workspaceName.value.trim()) return notify('Enter a study name');
   if (!variables.length) return notify('Add at least one variable');
   if (variables.some(variable => !variable.name || !variable.key)) return notify('Complete every variable binding');
   if (new Set(variables.map(variable => variable.name)).size !== variables.length) return notify('Variable names must be unique');
@@ -803,8 +950,10 @@ async function saveStudy(event) {
         variables: variables.map(({ id, kind, originalValue, ...variable }) => variable), samples,
       }),
     });
+    if (generation !== studyGeneration) return;
     editingStudyId = result.study_id;
     await loadStudies();
+    if (generation !== studyGeneration) return;
     studySelect.value = editingStudyId;
     workspaceResult.hidden = false; modalFootnote.hidden = true;
     workspaceResult.innerHTML = `<span>● SAVED</span><small>${result.variable_count} variables · ${result.sample_count} cases</small><a href="${safeText(result.download_url)}" download>DOWNLOAD JSON</a>`;
@@ -813,8 +962,10 @@ async function saveStudy(event) {
   } catch (error) {
     notify(error.message);
   } finally {
-    createWorkspaceBtn.disabled = false;
-    createWorkspaceBtn.querySelector('span').textContent = editingStudyId ? 'UPDATE STUDY' : 'SAVE STUDY';
+    if (generation === studyGeneration) {
+      createWorkspaceBtn.disabled = false;
+      createWorkspaceBtn.querySelector('span').textContent = editingStudyId ? 'UPDATE STUDY' : 'SAVE STUDY';
+    }
   }
 }
 
@@ -866,7 +1017,9 @@ function formatRunLabel(run) {
 
 async function loadRunHistory(selectedRunId = '') {
   if (!activeWorkspace) return;
+  const workspaceId = activeWorkspace.workspace_id;
   const payload = await request(workspaceUrl('/runs'));
+  if (activeWorkspace?.workspace_id !== workspaceId) return;
   runHistorySelect.innerHTML = '';
   if (!payload.runs.length) {
     runHistorySelect.add(new Option('NO RUNS', ''));
@@ -881,7 +1034,10 @@ async function loadRunHistory(selectedRunId = '') {
 
 async function showHistoricalRun(runId) {
   if (!runId || running) return;
+  resetPlayback();
+  const generation = playbackGeneration;
   const state = await request(workspaceUrl(`/runs/${encodeURIComponent(runId)}?offset=0`));
+  if (generation !== playbackGeneration) return;
   currentRunId = runId;
   consoleOutput.textContent = state.console || 'No console output was saved for this run.';
   renderArtifacts(state.artifacts);
@@ -890,11 +1046,15 @@ async function showHistoricalRun(runId) {
   runBadge.className = `fault-badge ${succeeded ? 'complete' : state.status === 'running' ? 'running' : 'has-fault'}`;
   resultsDrawer.classList.add('open');
   document.querySelector('#drawerHeader').setAttribute('aria-expanded', 'true');
+  await loadPlayback(runId);
 }
 
 async function runSimulation() {
   if (running || !activeModel || !activeWorkspace) return;
+  resetPlayback('Playback becomes available when the run completes.');
   running = true;
+  workspaceSelect.disabled = true;
+  runHistorySelect.disabled = true;
   runBtn.disabled = true; runBtnLabel.textContent = 'RUNNING…'; progressTrack.classList.add('visible'); progressFill.style.width = '0%';
   document.querySelectorAll('.wind-section > select').forEach(select => { select.disabled = true; });
   resultsDrawer.classList.add('open'); document.querySelector('#drawerHeader').setAttribute('aria-expanded', 'true');
@@ -937,31 +1097,42 @@ async function runSimulation() {
     if (!succeeded && finalState.error) consoleOutput.append(document.createTextNode(`\n${finalState.error}\n`));
     notify(succeeded ? `Run saved: ${currentRunId}` : `OpenFAST exited with code ${finalState.return_code ?? 'unknown'}`);
     await Promise.all([loadRunHistory(currentRunId), refreshWindUI()]);
+    await loadPlayback(currentRunId);
   } catch (error) {
     runBadge.textContent = 'FAILED'; runBadge.className = 'fault-badge has-fault';
     setStatus('error', 'RUN FAILED');
     consoleOutput.append(document.createTextNode(`\nmcFAST error: ${error.message}\n`));
     notify(error.message);
   } finally {
+    workspaceSelect.disabled = false;
+    runHistorySelect.disabled = !runHistorySelect.value;
     running = false; runBtn.disabled = false; runBtnLabel.textContent = 'RUN AGAIN'; progressTrack.classList.remove('visible');
     document.querySelectorAll('.wind-section > select').forEach(select => { select.disabled = activeWind?.turbsim_inputs?.length === 0; });
   }
 }
 
-document.querySelector('#collapseBtn').onclick = () => { sidePanel.classList.add('collapsed'); document.querySelector('#expandTab').classList.add('visible'); };
-document.querySelector('#expandTab').onclick = () => { sidePanel.classList.remove('collapsed'); document.querySelector('#expandTab').classList.remove('visible'); };
+featureButtons.forEach((button, index) => {
+  button.onclick = () => selectFeature(button.dataset.feature, true);
+  button.onkeydown = event => {
+    let next;
+    if (event.key === 'ArrowDown') next = (index + 1) % featureButtons.length;
+    if (event.key === 'ArrowUp') next = (index + featureButtons.length - 1) % featureButtons.length;
+    if (event.key === 'Home') next = 0;
+    if (event.key === 'End') next = featureButtons.length - 1;
+    if (next !== undefined) { event.preventDefault(); featureButtons[next].focus(); }
+  };
+});
+document.querySelector('#collapseBtn').onclick = () => { selectFeature(activeFeature, true); featureButtons.find(button => button.dataset.feature === activeFeature).focus(); };
 document.querySelector('#drawerHeader').onclick = toggleDrawer;
 document.querySelector('#drawerHeader').onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleDrawer(); } };
 runBtn.onclick = runSimulation;
 workspaceSelect.onchange = () => loadWorkspace(workspaceSelect.value);
 themeToggle.onclick = () => applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
-document.querySelector('#advancedBtn').onclick = openAdvanced;
-document.querySelector('#advancedClose').onclick = () => advancedModal.close();
-document.querySelector('#cancelWorkspaceBtn').onclick = () => advancedModal.close();
+document.querySelector('#cancelWorkspaceBtn').onclick = () => { selectFeature(activeFeature, true); featureButtons[2].focus(); };
 document.querySelector('#addVariableBtn').onclick = () => addVariable(activeNode?.path);
 emptyVariableBtn.onclick = () => addVariable(activeNode?.path);
 studySelect.onchange = () => openSavedStudy(studySelect.value).catch(error => notify(error.message));
-document.querySelector('#newStudyBtn').onclick = resetAdvancedForm;
+document.querySelector('#newStudyBtn').onclick = resetStudyForm;
 runHistorySelect.onclick = event => event.stopPropagation();
 runHistorySelect.onkeydown = event => event.stopPropagation();
 runHistorySelect.onchange = () => showHistoricalRun(runHistorySelect.value).catch(error => notify(error.message));
@@ -978,6 +1149,9 @@ clearSelectedCasesBtn.onclick = () => {
 clearCasesBtn.onclick = () => { caseRows = []; renderCaseTable(); };
 document.querySelector('#csvChooseBtn').onclick = () => csvInput.click();
 csvInput.onchange = async () => {
+  const generation = studyGeneration;
+  const importUrl = activeWorkspace ? workspaceUrl('/studies/csv-import') : null;
+  if (!importUrl || workspaceForm.inert) return;
   const file = csvInput.files?.[0];
   if (!file) return;
   if (file.size > 10 * 1024 * 1024) {
@@ -991,13 +1165,14 @@ csvInput.onchange = async () => {
     csvInput.value = ''; return notify('Variable names must be unique');
   }
   try {
-    const result = await request(workspaceUrl('/studies/csv-import'), {
+    const result = await request(importUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         variables: variables.map(({ id, kind, originalValue, ...variable }) => variable),
         csv_text: await file.text(),
       }),
     });
+    if (generation !== studyGeneration) return;
     if ((caseRows.length + result.samples.length) > 100000
       || (caseRows.length + result.samples.length) * variables.length > 1_000_000) {
       return notify('Appending this CSV would exceed the case-table limits');
@@ -1023,7 +1198,7 @@ csvInput.onchange = async () => {
   } catch (error) {
     notify(error.message);
   } finally {
-    csvInput.value = '';
+    if (generation === studyGeneration) csvInput.value = '';
   }
 };
 workspaceForm.addEventListener('submit', saveStudy);
@@ -1097,6 +1272,7 @@ document.querySelector('#importClose').onclick = () => importModal.close();
 document.querySelector('#cancelImportBtn').onclick = () => importModal.close();
 
 async function boot() {
+  rebuildGeometry(undefined, 'Select a workspace to inspect geometry');
   try {
     const payload = await request('/api/sources');
     sourceModels = payload.sources;

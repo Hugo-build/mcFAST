@@ -39,9 +39,14 @@
       </header>
 
       <div class="workspace-shell">
-        <aside class="side-panel" id="sidePanel" aria-label="Workspace configuration">
+        <nav class="feature-rail" aria-label="Workspace features">
+          <button class="feature-button active" data-feature="files" type="button" title="Files" aria-label="Files" aria-controls="filesPanel" aria-expanded="true" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v12H3Z"/><path d="M3 6V4h7l2 2"/></svg><span class="feature-tooltip">Files</span></button>
+          <button class="feature-button" data-feature="geometry" type="button" title="Geometry" aria-label="Geometry" aria-controls="geometryPanel" aria-expanded="false" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5v9l-9 5-9-5V8Z"/><path d="m3 8 9 5 9-5M12 13v9M12 3v10"/></svg><span class="feature-tooltip">Geometry</span></button>
+          <button class="feature-button" data-feature="study" type="button" title="Variable Study" aria-label="Variable Study" aria-controls="studyPanel" aria-expanded="false" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h9m4 0h3M4 12h3m4 0h9M4 18h10m4 0h2M13 3v6m-6 0v6m7 0v6"/></svg><span class="feature-tooltip">Variable Study</span></button>
+        </nav>
+        <aside class="side-panel" id="sidePanel" aria-label="Workspace features">
           <div class="panel-header">
-            <span class="panel-title">WORKSPACE PROJECT</span>
+            <span class="panel-title" id="panelTitle">WORKSPACE FILES</span>
             <button class="icon-btn" id="collapseBtn" type="button" title="Collapse panel" aria-label="Collapse panel">‹</button>
           </div>
           <div class="panel-selector">
@@ -52,20 +57,113 @@
             </div>
           </div>
           <div class="panel-meta"><span id="activeModelName">WAITING FOR API</span><span><b id="modelMode">LOCKED .FST</b></span></div>
-          <div class="panel-body">
+          <div class="panel-body feature-panel" id="filesPanel" aria-label="Workspace files">
             <section class="tree-section">
               <div class="section-label"><span>LINKED INPUT GRAPH</span><span id="fileCount">0 FILES</span></div>
               <div class="tree-hint">Select a file to expand its parsed records.</div>
               <div id="fileTree" class="file-tree"><div class="console-empty">Choose a model deck to inspect its linked inputs.</div></div>
             </section>
           </div>
+          <section class="panel-body feature-panel" id="geometryPanel" aria-label="Geometry" hidden>
+            <div class="section-label">RENDERED GEOMETRY</div>
+            <p class="tree-hint" id="geometryContext">Current workspace geometry</p>
+            <div id="geometryList"></div>
+            <section class="environment-section"><div class="section-label">ENVIRONMENT</div><p>Ocean rendering <span>Coming later</span></p><p>Weather rendering <span>Coming later</span></p></section>
+          </section>
+          <section class="feature-panel study-panel" id="studyPanel" aria-labelledby="advancedTitle" hidden>
+            <form class="modal-shell" id="workspaceForm">
+              <header class="modal-header">
+                <div class="modal-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M4 6.5h9m4 0h3M4 12h3m4 0h9M4 17.5h10m4 0h2M13 4v5m-6 .5v5m7-1.5v9"/></svg>
+                </div>
+                <div>
+                  <span class="modal-eyebrow">VARIABLE STUDY</span>
+                  <h2 id="advancedTitle">Configure a variable study</h2>
+                  <p>Define variables and save explicit study cases inside the active workspace project.</p>
+                </div>
+              </header>
+
+              <div class="modal-content">
+                <section class="workspace-basics">
+                  <label class="field workspace-name-field">
+                    <span>STUDY NAME</span>
+                    <input id="workspaceName" maxlength="80" required placeholder="e.g. Rated wind sensitivity" />
+                  </label>
+                  <div class="source-deck">
+                    <span>LOCKED WORKSPACE ENTRY</span>
+                    <strong id="workspaceSource">No model selected</strong>
+                    <small id="workspaceSourceMeta">Study files stay paired with this workspace.</small>
+                  </div>
+                </section>
+
+                <section class="saved-study-bar">
+                  <label class="field"><span>SAVED STUDIES</span><select id="studySelect"><option value="">New study</option></select></label>
+                  <button class="secondary-btn" id="newStudyBtn" type="button">NEW STUDY</button>
+                </section>
+
+                <section class="modal-section variable-section">
+                  <div class="modal-section-heading">
+                    <div><span class="step-number">01</span><div><h3>Variables</h3><p>Select a linked file, then bind its exact parameter key.</p></div></div>
+                    <button class="secondary-btn" id="addVariableBtn" type="button"><span>＋</span> ADD VARIABLE</button>
+                  </div>
+                  <div class="variable-columns" aria-hidden="true"><span>VARIABLE NAME</span><span>INPUT FILE</span><span>EXACT PARAMETER</span><span></span></div>
+                  <div class="variable-list" id="variableList"></div>
+                  <button class="empty-variable" id="emptyVariableBtn" type="button">
+                    <span>＋</span><b>Add the first variable</b><small>Choose from any input file linked to this model.</small>
+                  </button>
+                </section>
+
+                <section class="modal-section case-section">
+                  <div class="modal-section-heading">
+                    <div><span class="step-number">02</span><div><h3>Cases</h3><p>Enter one complete set of selected-variable values per row.</p></div></div>
+                  </div>
+                  <div class="case-toolbar">
+                    <div class="case-toolbar-primary">
+                      <button class="secondary-btn" id="addCaseBtn" type="button"><span>＋</span> ADD ROW</button>
+                      <input id="csvInput" type="file" accept=".csv,text/csv" hidden />
+                      <button class="secondary-btn" id="csvChooseBtn" type="button"><span>⇧</span> UPLOAD CSV</button>
+                    </div>
+                    <div class="case-toolbar-clear">
+                      <button class="secondary-btn" id="clearSelectedCasesBtn" type="button" disabled>CLEAR SELECTED ROWS</button>
+                      <button class="secondary-btn danger-btn" id="clearCasesBtn" type="button" disabled>CLEAR TABLE</button>
+                    </div>
+                  </div>
+                  <div class="case-table-wrap" id="caseTableWrap">
+                    <table class="case-table" id="caseTable">
+                      <thead><tr id="caseTableHead"><th class="case-select-cell"><input id="selectAllCases" type="checkbox" aria-label="Select all case rows" /></th><th class="case-number-cell">#</th></tr></thead>
+                      <tbody id="caseTableBody"></tbody>
+                    </table>
+                    <button class="empty-case" id="emptyCaseBtn" type="button"><span>＋</span><b>Add the first case</b><small>The first row starts with values from the active model.</small></button>
+                  </div>
+                  <div class="csv-status" id="csvStatus" hidden></div>
+                </section>
+              </div>
+
+              <footer class="modal-footer">
+                <div class="workspace-result" id="workspaceResult" hidden></div>
+                <span class="modal-footnote" id="modalFootnote">Saved inside this workspace; reference model files stay unchanged.</span>
+                <button class="secondary-btn" id="cancelWorkspaceBtn" type="button">CLOSE PANEL</button>
+                <button class="create-workspace-btn" id="createWorkspaceBtn" type="submit"><span>SAVE STUDY</span><i>→</i></button>
+              </footer>
+            </form>
+          </section>
+
         </aside>
 
-        <button class="expand-tab" id="expandTab" type="button" title="Expand model config" aria-label="Expand model config">›</button>
 
         <main class="viewport" aria-label="3D model viewport">
+          <section class="playback-panel" aria-label="Result playback">
+            <div id="playbackMessage" role="status">Select a completed run for playback.</div>
+            <div class="playback-controls" id="playbackControls" hidden>
+              <button id="playbackPlay" type="button">Play</button>
+              <button id="playbackReplay" type="button">Replay</button>
+              <input id="playbackSeek" type="range" min="0" max="1" step="any" value="0" aria-label="Playback simulation time" />
+              <output id="playbackTime">0.0 / 0.0 s</output>
+              <select id="playbackSpeed" aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+            </div>
+          </section>
+          <div class="viewport-stage">
           <canvas id="scene" aria-label="Interactive 3D wind turbine. Drag to orbit, scroll to zoom, and right-drag to pan."></canvas>
-          <div class="viewport-caption">3D VIEWPORT <span>·</span> <b>drag</b> TO ORBIT <span>·</span> <b>scroll</b> TO ZOOM <span>·</span> <b>right drag</b> TO PAN <span>·</span> <b>double click</b> TO RESET</div>
           <div class="viewport-label"><span id="viewportModelLabel">OPENFAST MODEL</span><b>PARAMETRIC GEOMETRY</b></div>
 
           <div class="hud">
@@ -82,23 +180,15 @@
             <div class="hud-card stat-card">
               <div class="stat-row"><span class="stat-label">POWER OUTPUT</span><span class="stat-value" id="powerValue">0 kW</span></div>
               <div class="stat-row"><span class="stat-label">WIND SPEED</span><span class="stat-value" id="windValue">— m/s</span></div>
-              <div class="stat-row"><span class="stat-label">GEN. TORQUE</span><span class="stat-value" id="torqueValue">— kNm</span></div>
+              <div class="stat-row"><span class="stat-label">ROTOR TORQUE</span><span class="stat-value" id="torqueValue">— kNm</span></div>
             </div>
-          </div>
-
-          <div class="advanced-dash" aria-label="Advanced features">
-            <span>ADVANCED FEATURES</span>
-            <button class="advanced-launcher" id="advancedBtn" type="button">
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h7M13 5.5h4M3 10h2m3 0h9M3 14.5h8m3 0h3M10 3v5m-4-1v6m7-1v5"/></svg>
-              <span><b>VARIABLE STUDY</b><small>Explicit case values</small></span>
-              <i>›</i>
-            </button>
           </div>
 
           <div class="controls-dock">
             <div class="progress-track" id="progressTrack"><div class="progress-fill" id="progressFill"></div></div>
             <button class="run-btn" id="runBtn" type="button"><span class="dot-icon"></span><span id="runBtnLabel">RUN OPENFAST</span></button>
             <span class="run-note">NATIVE OPENFAST · SAVES RESULTS</span>
+          </div>
           </div>
         </main>
       </div>
@@ -116,85 +206,6 @@
         </div>
       </section>
     </div>
-
-    <dialog class="advanced-modal" id="advancedModal" aria-labelledby="advancedTitle">
-      <form method="dialog" class="modal-shell" id="workspaceForm">
-        <header class="modal-header">
-          <div class="modal-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M4 6.5h9m4 0h3M4 12h3m4 0h9M4 17.5h10m4 0h2M13 4v5m-6 .5v5m7-1.5v9"/></svg>
-          </div>
-          <div>
-            <span class="modal-eyebrow">ADVANCED FEATURES / VARIABLE STUDY</span>
-            <h2 id="advancedTitle">Configure a variable study</h2>
-            <p>Define variables and save explicit study cases inside the active workspace project.</p>
-          </div>
-          <button class="modal-close" id="advancedClose" type="button" aria-label="Close">×</button>
-        </header>
-
-        <div class="modal-content">
-          <section class="workspace-basics">
-            <label class="field workspace-name-field">
-              <span>STUDY NAME</span>
-              <input id="workspaceName" maxlength="80" required placeholder="e.g. Rated wind sensitivity" />
-            </label>
-            <div class="source-deck">
-              <span>LOCKED WORKSPACE ENTRY</span>
-              <strong id="workspaceSource">No model selected</strong>
-              <small id="workspaceSourceMeta">Study files stay paired with this workspace.</small>
-            </div>
-          </section>
-
-          <section class="saved-study-bar">
-            <label class="field"><span>SAVED STUDIES</span><select id="studySelect"><option value="">New study</option></select></label>
-            <button class="secondary-btn" id="newStudyBtn" type="button">NEW STUDY</button>
-          </section>
-
-          <section class="modal-section variable-section">
-            <div class="modal-section-heading">
-              <div><span class="step-number">01</span><div><h3>Variables</h3><p>Select a linked file, then bind its exact parameter key.</p></div></div>
-              <button class="secondary-btn" id="addVariableBtn" type="button"><span>＋</span> ADD VARIABLE</button>
-            </div>
-            <div class="variable-columns" aria-hidden="true"><span>VARIABLE NAME</span><span>INPUT FILE</span><span>EXACT PARAMETER</span><span></span></div>
-            <div class="variable-list" id="variableList"></div>
-            <button class="empty-variable" id="emptyVariableBtn" type="button">
-              <span>＋</span><b>Add the first variable</b><small>Choose from any input file linked to this model.</small>
-            </button>
-          </section>
-
-          <section class="modal-section case-section">
-            <div class="modal-section-heading">
-              <div><span class="step-number">02</span><div><h3>Cases</h3><p>Enter one complete set of selected-variable values per row.</p></div></div>
-            </div>
-            <div class="case-toolbar">
-              <div class="case-toolbar-primary">
-                <button class="secondary-btn" id="addCaseBtn" type="button"><span>＋</span> ADD ROW</button>
-                <input id="csvInput" type="file" accept=".csv,text/csv" hidden />
-                <button class="secondary-btn" id="csvChooseBtn" type="button"><span>⇧</span> UPLOAD CSV</button>
-              </div>
-              <div class="case-toolbar-clear">
-                <button class="secondary-btn" id="clearSelectedCasesBtn" type="button" disabled>CLEAR SELECTED ROWS</button>
-                <button class="secondary-btn danger-btn" id="clearCasesBtn" type="button" disabled>CLEAR TABLE</button>
-              </div>
-            </div>
-            <div class="case-table-wrap" id="caseTableWrap">
-              <table class="case-table" id="caseTable">
-                <thead><tr id="caseTableHead"><th class="case-select-cell"><input id="selectAllCases" type="checkbox" aria-label="Select all case rows" /></th><th class="case-number-cell">#</th></tr></thead>
-                <tbody id="caseTableBody"></tbody>
-              </table>
-              <button class="empty-case" id="emptyCaseBtn" type="button"><span>＋</span><b>Add the first case</b><small>The first row starts with values from the active model.</small></button>
-            </div>
-            <div class="csv-status" id="csvStatus" hidden></div>
-          </section>
-        </div>
-
-        <footer class="modal-footer">
-          <div class="workspace-result" id="workspaceResult" hidden></div>
-          <span class="modal-footnote" id="modalFootnote">Saved inside this workspace; reference model files stay unchanged.</span>
-          <button class="secondary-btn" id="cancelWorkspaceBtn" type="button">CANCEL</button>
-          <button class="create-workspace-btn" id="createWorkspaceBtn" type="submit"><span>SAVE STUDY</span><i>→</i></button>
-        </footer>
-      </form>
-    </dialog>
 
     <dialog class="import-modal" id="importModal" aria-labelledby="importTitle">
       <form method="dialog" class="import-shell" id="importForm">
