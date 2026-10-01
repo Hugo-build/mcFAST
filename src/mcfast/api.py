@@ -22,6 +22,8 @@ from pydantic import BaseModel
 from .models import discover_models, model_geometry, referenced_files, safe_path
 from .parser import parse_file, update_file
 from .playback import read_playback
+from .results import read_results, result_metadata, result_series
+from .output_store import release_store
 from .runner import find_openfast, find_turbsim, run_openfast, run_turbsim, turbsim_version
 from .wind import discover_turbsim_inputs, find_inflow_file, managed_bts_reference, project_path, wind_status
 
@@ -992,6 +994,37 @@ def workspace_run_playback(workspace_id: str, run_id: str) -> dict[str, Any]:
         geometry = model_geometry(root, workspace["entry"])
     payload["geometry"] = geometry
     return payload
+
+
+def _read_run_results(workspace_id: str, run_id: str):
+    state = _run_payload(workspace_id, run_id)
+    if state["status"] != "completed":
+        raise ValueError("Results are available after a successful run completes.")
+    return read_results(_run_dir(workspace_id, run_id), state["model"] or "")
+
+
+@app.get("/api/workspaces/{workspace_id}/runs/{run_id}/results")
+def workspace_run_results(workspace_id: str, run_id: str):
+    try:
+        return result_metadata(_read_run_results(workspace_id, run_id))
+    except ValueError as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+@app.delete("/api/workspaces/{workspace_id}/runs/{run_id}/results/cache")
+def workspace_release_results(workspace_id: str, run_id: str):
+    _run_payload(workspace_id, run_id)
+    release_store(_run_dir(workspace_id, run_id))
+    return {"released": True}
+
+
+@app.get("/api/workspaces/{workspace_id}/runs/{run_id}/results/series")
+def workspace_run_series(workspace_id: str, run_id: str, channel: list[str] = Query(...),
+                         start: float | None = None, end: float | None = None):
+    try:
+        return result_series(_read_run_results(workspace_id, run_id), channel, start, end)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/api/workspaces/{workspace_id}/runs/{run_id}/files/{filename:path}")

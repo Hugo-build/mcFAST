@@ -1,6 +1,7 @@
 import './style.css';
 import { createScene } from './scene.js';
 import { createPlayback } from './playback.js';
+import { createResultsPanel } from './results-panel.js';
 
 const workspaceSelect = document.querySelector('#workspaceSelect');
 const fileTree = document.querySelector('#fileTree');
@@ -54,6 +55,10 @@ const sourceSelect = document.querySelector('#sourceSelect');
 const sourcePath = document.querySelector('#sourcePath');
 const confirmImportBtn = document.querySelector('#confirmImportBtn');
 const visual = createScene(document.querySelector('#scene'));
+const resultsPanel = createResultsPanel({ request, selectRun: runId => {
+  runHistorySelect.value = runId;
+  return showHistoricalRun(runId).catch(error => notify(error.message));
+} });
 
 workspaceForm.inert = true;
 const featureButtons = [...document.querySelectorAll('[data-feature]')];
@@ -199,6 +204,7 @@ const playbackSpeed = document.querySelector('#playbackSpeed');
 let playback = null;
 let playbackData = null;
 let playbackGeneration = 0;
+let playbackRequest = null;
 let lastPlaybackFrame = null;
 
 function clearResultTelemetry() {
@@ -211,6 +217,7 @@ function clearResultTelemetry() {
 
 function resetPlayback(message = 'Select a completed run for playback.') {
   playbackGeneration++;
+  playbackRequest?.abort(); playbackRequest = null;
   playback = null;
   playbackData = null;
   lastPlaybackFrame = null;
@@ -240,8 +247,9 @@ async function loadPlayback(runId) {
   resetPlayback('Loading completed results…');
   const generation = playbackGeneration;
   const url = workspaceUrl(`/runs/${encodeURIComponent(runId)}/playback`);
+  const controller = playbackRequest = new AbortController();
   try {
-    const data = await request(url);
+    const data = await request(url, { signal: controller.signal });
     if (generation !== playbackGeneration) return;
     if (!data.available) { playbackMessage.textContent = data.reason; return; }
     playbackData = data;
@@ -256,6 +264,7 @@ async function loadPlayback(runId) {
     if (data.missing_channels.length) notes.push(`Unavailable channels: ${data.missing_channels.join(', ')}. Missing platform motion uses zero.`);
     playbackMessage.textContent = notes.join(' · ');
     renderPlaybackFrame();
+    return data;
   } catch (error) {
     if (generation === playbackGeneration) playbackMessage.textContent = `Playback unavailable: ${error.message}`;
   }
@@ -579,6 +588,7 @@ function renderFileTree(files) {
 }
 
 async function loadWorkspace(workspaceId) {
+  resultsPanel.reset(workspaceId);
   resetPlayback();
   workspaceForm.inert = true;
   studyGeneration++;
@@ -1024,12 +1034,14 @@ async function loadRunHistory(selectedRunId = '') {
   if (!payload.runs.length) {
     runHistorySelect.add(new Option('NO RUNS', ''));
     runHistorySelect.disabled = true;
+    resultsPanel.setRuns(runHistorySelect);
     return;
   }
   runHistorySelect.disabled = false;
   payload.runs.forEach(run => runHistorySelect.add(new Option(formatRunLabel(run), run.run_id)));
   runHistorySelect.value = selectedRunId && payload.runs.some(run => run.run_id === selectedRunId)
     ? selectedRunId : payload.runs[0].run_id;
+  resultsPanel.setRuns(runHistorySelect, running);
 }
 
 async function showHistoricalRun(runId) {
@@ -1046,7 +1058,8 @@ async function showHistoricalRun(runId) {
   runBadge.className = `fault-badge ${succeeded ? 'complete' : state.status === 'running' ? 'running' : 'has-fault'}`;
   resultsDrawer.classList.add('open');
   document.querySelector('#drawerHeader').setAttribute('aria-expanded', 'true');
-  await loadPlayback(runId);
+  const playbackLoad = loadPlayback(runId);
+  await Promise.all([playbackLoad, resultsPanel.load(activeWorkspace.workspace_id, runId, playbackLoad)]);
 }
 
 async function runSimulation() {
@@ -1055,6 +1068,7 @@ async function runSimulation() {
   running = true;
   workspaceSelect.disabled = true;
   runHistorySelect.disabled = true;
+  resultsPanel.setRuns(runHistorySelect, true);
   runBtn.disabled = true; runBtnLabel.textContent = 'RUNNING…'; progressTrack.classList.add('visible'); progressFill.style.width = '0%';
   document.querySelectorAll('.wind-section > select').forEach(select => { select.disabled = true; });
   resultsDrawer.classList.add('open'); document.querySelector('#drawerHeader').setAttribute('aria-expanded', 'true');
@@ -1106,6 +1120,8 @@ async function runSimulation() {
   } finally {
     workspaceSelect.disabled = false;
     runHistorySelect.disabled = !runHistorySelect.value;
+    resultsPanel.setRuns(runHistorySelect);
+    if (currentRunId) await resultsPanel.load(activeWorkspace.workspace_id, currentRunId, Promise.resolve(playbackData));
     running = false; runBtn.disabled = false; runBtnLabel.textContent = 'RUN AGAIN'; progressTrack.classList.remove('visible');
     document.querySelectorAll('.wind-section > select').forEach(select => { select.disabled = activeWind?.turbsim_inputs?.length === 0; });
   }

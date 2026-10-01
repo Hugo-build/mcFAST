@@ -376,3 +376,26 @@ button:focus-visible, select:focus-visible, input:focus-visible, .file-node:focu
   .side-panel.collapsed { width: 0; box-shadow: none; }
 }
 @media (prefers-reduced-motion: reduce) { .side-panel { transition: none; } }
+
+.results-rail { border-right: 0; border-left: 1px solid var(--border); }
+.results-rail .feature-tooltip { left: auto; right: 44px; }
+.results-panel { width: 480px; flex: 0 0 480px; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--border); }
+.results-panel[hidden], .results-panel [hidden] { display: none; }
+.results-content { overflow-y: auto; padding: 14px; min-height: 0; }
+#resultsMessage { color: var(--text-dim); font: 11px/1.6 var(--font-mono); overflow-wrap: anywhere; }
+.results-content > .field { margin-top: 12px; }
+.results-channels { max-height: 180px; overflow: auto; margin: 10px 0 14px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); font: 11px var(--font-mono); }
+.result-channel { display: flex; align-items: center; gap: 8px; padding: 7px 9px; cursor: pointer; }
+.result-channel:hover { background: var(--panel-elevated); }
+.result-channel span { flex: 1; overflow-wrap: anywhere; }
+.result-channel small { color: var(--text-faint); }
+.results-range { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.results-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.results-graphs { margin-top: 16px; }
+.result-graph { padding: 10px 0; border-top: 1px solid var(--border); }
+.result-graph strong { display: block; color: var(--text); font: 12px var(--font-mono); overflow-wrap: anywhere; }
+.graph-readout { display: block; min-height: 26px; padding-top: 6px; color: var(--text-dim); font: 10px var(--font-mono); }
+.result-graph svg { display: block; width: 100%; touch-action: none; user-select: none; cursor: crosshair; }
+@media (max-width: 1200px) {
+  .results-panel { position: absolute; right: 48px; top: 0; bottom: 0; width: min(480px, calc(100vw - 96px)); z-index: 24; box-shadow: -8px 0 24px #0003; }
+}

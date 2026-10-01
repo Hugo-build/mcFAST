@@ -191,6 +191,24 @@
           </div>
           </div>
         </main>
+        <aside class="results-panel" id="resultsPanel" aria-label="Time-series results" hidden>
+          <div class="panel-header"><span class="panel-title">TIME-SERIES RESULTS</span><button class="icon-btn" id="resultsClose" type="button" aria-label="Close results panel">›</button></div>
+          <div class="results-content">
+            <label class="field"><span>SAVED RUN</span><select id="resultsRun" aria-label="Results run"><option value="">NO RUNS</option></select></label>
+            <p id="resultsMessage" role="status" aria-live="polite"></p>
+            <button id="resultsRetry" class="secondary-btn" type="button" hidden>RETRY</button>
+            <label class="field"><span>OUTPUT CHANNELS</span><input id="channelSearch" type="search" placeholder="Search channels or units" aria-label="Search output channels" disabled /></label>
+            <div id="resultsChannels" class="results-channels"></div>
+            <div id="resultsControls" hidden>
+              <div class="results-range"><label class="field"><span>START (s)</span><input id="resultsStart" type="number" step="any" /></label><label class="field"><span>END (s)</span><input id="resultsEnd" type="number" step="any" /></label></div>
+              <div class="results-actions"><button id="resultsApply" class="secondary-btn" type="button">APPLY RANGE</button><button id="resultsReset" class="secondary-btn" type="button">RESET RANGE</button></div>
+              <p class="tree-hint">Drag on a graph to zoom. Keyboard: + to zoom, 0 to reset. Time inputs select an exact interval.</p>
+              <div class="results-actions"><button id="resultsCSV" class="secondary-btn" type="button" disabled>EXPORT CSV</button><button id="resultsPNG" class="secondary-btn" type="button" disabled>EXPORT PNG</button></div>
+            </div>
+            <div id="resultsGraphs" class="results-graphs"></div>
+          </div>
+        </aside>
+        <nav class="feature-rail results-rail" aria-label="Results tools"><button id="resultsToggle" class="feature-button" type="button" title="Time-series results" aria-label="Time-series results" aria-controls="resultsPanel" aria-expanded="false" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3v17h17M6 15l4-6 4 4 6-8"/></svg><span class="feature-tooltip">Time-series results</span></button></nav>
       </div>
 
       <section class="results-drawer" id="resultsDrawer" aria-label="Results console">

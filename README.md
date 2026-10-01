@@ -97,6 +97,25 @@ A reproducible first check is the IEA 15 MW UMaineSemi deck with `WindType = 1`,
 `HWindSpeed = 10`, and `TMax = 10` in an isolated workspace. Constant wind is
 only the test setup; other completed runs with the required channels also play.
 
+## Time-series results
+
+The graph icon on the right opens the Results panel. Select a saved completed
+run, search output channels by name or unit, and inspect stacked graphs.
+Start/end inputs and drag-to-zoom control an interval independent of playback;
+Reset range restores the full run. CSV exports original samples in the inclusive
+interval, while PNG exports the displayed graphs with run and source details.
+
+Playback and graphs share one backend output store. Binary formats 1–4 use
+read-only memory mapping and decode requested columns only; metadata does not
+decompress channel data. Text output is converted in bounded chunks into a
+temporary disk-backed array. Decoded columns use a 64 MiB backend cache, and
+browser channels use a conservative 32 MiB cache allowance. Playback channel
+arrays are also reused for plots. Switching runs or workspaces clears browser
+plot data, aborts pending browser requests, and releases the old backend cache;
+in-flight backend requests retain valid references until they finish. Cache
+limits exclude active responses and operating-system file pages. Closing the
+panel preserves current selections.
+
 ## Left feature panels
 
 The persistent icon bar switches between **Files**, **Geometry**, and
@@ -169,6 +188,9 @@ workspace switches to external mode and runs OpenFAST without invoking TurbSim.
 - `PUT /api/workspaces/{workspace-id}/wind` selects a managed `.in` and updates `FileName_BTS`.
 - `POST /api/workspaces/{workspace-id}/runs` starts the TurbSim/OpenFAST pipeline in the background.
 - `GET /api/workspaces/{workspace-id}/runs/{run-id}?offset=…` returns incremental console output and state.
+- `GET /api/workspaces/{workspace-id}/runs/{run-id}/results` returns source, time bounds, sample count, and channel names/units.
+- `GET /api/workspaces/{workspace-id}/runs/{run-id}/results/series?channel=RotSpeed` returns full-resolution selected channels, with optional inclusive `start`/`end`.
+- `DELETE /api/workspaces/{workspace-id}/runs/{run-id}/results/cache` releases that run’s cached reader.
 - `GET /api/workspaces/{workspace-id}/runs/{run-id}/playback` returns availability, timestamps, channel values/units, missing channels, and playback geometry.
 
 The conservative parser does not rewrite tables or output-channel lists. That
