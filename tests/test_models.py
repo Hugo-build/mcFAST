@@ -51,6 +51,44 @@ def test_model_geometry_omits_floater_without_supported_gdf(tmp_path):
     assert model_geometry(tmp_path, "main.fst")["floater"] is None
 
 
+def test_tower_profile_follows_aerofile_and_reads_updated_table(tmp_path):
+    (tmp_path / "main.fst").write_text('"aero.dat" AeroFile - aerodynamics\n')
+    aero = tmp_path / "aero.dat"
+    aero.write_text(
+        "3 NumTwrNds - tower stations\n"
+        "TwrElev TwrDiam TwrCd\n(m) (m) (-)\n"
+        "15 10 0.5\n80 8 0.5\n144.386 6.5D0 0.5\n"
+    )
+    profile = model_geometry(tmp_path, "main.fst")["towerProfile"]
+    assert profile == {"source": "aero.dat", "stations": [
+        {"elevation": 15, "radius": 5},
+        {"elevation": 80, "radius": 4},
+        {"elevation": 144.386, "radius": 3.25},
+    ]}
+    aero.write_text(aero.read_text().replace("80 8", "80 9"))
+    assert model_geometry(tmp_path, "main.fst")["towerProfile"]["stations"][1]["radius"] == 4.5
+
+
+@pytest.mark.parametrize("rows", [
+    "15 10\n",                         # truncated table
+    "15 10\n144 0\n",                 # nonpositive diameter
+    "15 10\n144 nan\n",               # nonfinite diameter
+    "15 10\ninf 6.5\n",               # nonfinite elevation
+    "15 10\n15 6.5\n",                # duplicate elevations
+    "144 10\n15 6.5\n",               # descending elevations
+])
+def test_invalid_tower_profile_uses_schematic_fallback(tmp_path, rows):
+    (tmp_path / "main.fst").write_text('"aero.dat" AeroFile - aerodynamics\n')
+    (tmp_path / "aero.dat").write_text("2 NumTwrNds - stations\nTwrElev TwrDiam\n(m) (m)\n" + rows)
+    assert model_geometry(tmp_path, "main.fst")["towerProfile"] is None
+
+
+def test_tower_table_must_be_in_linked_aerodyn_file(tmp_path):
+    (tmp_path / "main.fst").write_text('"tower.dat" TwrFile - structural tower\n')
+    (tmp_path / "tower.dat").write_text("2 NumTwrNds - stations\nTwrElev TwrDiam\n(m) (m)\n15 10\n144 6.5\n")
+    assert model_geometry(tmp_path, "main.fst")["towerProfile"] is None
+
+
 def test_official_iea15mw_volturnus_model_when_downloaded():
     root = Path(__file__).parents[1] / "models"
     candidates = list(root.glob("IEA-15-240-RWT/**/*UMaineSemi*.fst"))
@@ -60,3 +98,7 @@ def test_official_iea15mw_volturnus_model_when_downloaded():
     graph = referenced_files(root, entry)
     assert len(graph["files"]) >= 5
     assert any("ElastoDyn" in node["name"] for node in graph["files"])
+    profile = model_geometry(root, entry)["towerProfile"]
+    assert len(profile["stations"]) == 11
+    assert profile["stations"][0] == {"elevation": 15, "radius": 5}
+    assert profile["stations"][-1] == {"elevation": 144.386, "radius": 3.25}

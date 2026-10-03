@@ -125,6 +125,11 @@ The study editor uses a wider panel on desktop and an overlay on small screens;
 unsaved values survive panel switches but reset when changing workspaces.
 
 Geometry lists generated turbine parts and the supported platform GDF source.
+Tower geometry uses the linked AeroDyn file's `NumTwrNds`, `TwrElev`, and
+`TwrDiam` table: radii are half the diameters, with a linear taper between
+stations at their specified elevations. The Geometry panel shows the source
+file. Models without a valid table and older saved runs without a tower profile
+use the schematic tower dimensions (7 m base radius and 2.4 m top radius).
 Visibility checkboxes affect only the 3D display and persist through playback
 and scene rebuilds. Ocean and weather rendering are reserved for future work.
 

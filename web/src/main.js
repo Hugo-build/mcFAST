@@ -88,7 +88,7 @@ function rebuildGeometry(geometry, context = 'Current workspace geometry') {
   const list = document.querySelector('#geometryList');
   list.replaceChildren();
   const entries = [
-    ['tower', 'Tower', 'Generated from OpenFAST parameters'],
+    ['tower', 'Tower', geometry?.towerProfile ? `${geometry.towerProfile.source} · TwrElev / TwrDiam` : 'Schematic tower · no supported AeroDyn diameter table'],
     ['nacelle', 'Nacelle', 'Generated geometry'],
     ['hub', 'Hub', 'Generated geometry'],
     ['blades', 'Blades', 'Generated from OpenFAST parameters'],

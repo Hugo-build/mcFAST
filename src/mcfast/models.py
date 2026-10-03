@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
 from typing import Any
 
 from .parser import parse_file
@@ -190,6 +191,41 @@ def _parse_low_order_gdf(root: Path, path: Path) -> dict[str, Any] | None:
     }
 
 
+def _tower_profile(root: Path, graph: dict[str, Any]) -> dict[str, Any] | None:
+    """Read the diameter distribution from the linked AeroDyn tower table."""
+    for edge in graph["references"]:
+        if edge["key"].casefold() != "aerofile":
+            continue
+        path = safe_path(root, edge["to"])
+        count = parse_file(path)["data"].get("NumTwrNds")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 2:
+            continue
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for index, line in enumerate(lines):
+            columns = line.split("!", 1)[0].split()
+            if "TwrElev" not in columns or "TwrDiam" not in columns:
+                continue
+            elevation_column = columns.index("TwrElev")
+            diameter_column = columns.index("TwrDiam")
+            stations = []
+            # AeroDyn places one units row immediately below the headings.
+            for row in lines[index + 2:index + 2 + count]:
+                try:
+                    values = row.split("!", 1)[0].split()
+                    elevation = float(values[elevation_column].replace("D", "E").replace("d", "e"))
+                    diameter = float(values[diameter_column].replace("D", "E").replace("d", "e"))
+                except (ValueError, IndexError):
+                    break
+                if not math.isfinite(elevation) or not math.isfinite(diameter) or diameter <= 0:
+                    break
+                if stations and elevation <= stations[-1]["elevation"]:
+                    break
+                stations.append({"elevation": elevation, "radius": diameter / 2})
+            if len(stations) == count:
+                return {"source": edge["to"], "stations": stations}
+    return None
+
+
 def model_geometry(root: Path, entry_relative: str) -> dict[str, Any]:
     graph = referenced_files(root, entry_relative)
     merged: dict[str, Any] = {}
@@ -211,6 +247,7 @@ def model_geometry(root: Path, entry_relative: str) -> dict[str, Any]:
     return {
         "hubHeight": max(20.0, hub_height),
         "bladeLength": max(5.0, blade_length),
+        "towerProfile": _tower_profile(root, graph),
         "platformReferenceZ": number(("PtfmRefzt",), 0.0),
         "azimuthBlade1Up": number(("AzimB1Up",), 0.0),
         "overhang": number(("OverHang", "Overhang"), 10.0),

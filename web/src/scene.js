@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { platformTransform } from './playback.js';
+import { createTowerGeometry } from './tower-geometry.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 export function createScene(canvas) {
@@ -112,10 +113,6 @@ export function createScene(canvas) {
     setGridColors(palette.gridCenter, palette.gridLine);
   }
 
-  function cylinder(radiusTop, radiusBottom, height, mat = material, segments = 20) {
-    return new THREE.Mesh(new THREE.CylinderGeometry(radiusTop, radiusBottom, height, segments), mat);
-  }
-
   function fitCameraToTurbine() {
     if (!turbine) return;
     turbine.updateMatrixWorld(true);
@@ -133,7 +130,7 @@ export function createScene(canvas) {
     controls.update();
   }
 
-  function rebuild({ hubHeight = 150, bladeLength = 117, floater = null, platformReferenceZ = 0, azimuthBlade1Up = 0 } = {}) {
+  function rebuild({ hubHeight = 150, bladeLength = 117, towerProfile = null, floater = null, platformReferenceZ = 0, azimuthBlade1Up = 0 } = {}) {
     if (turbine) {
       turbine.traverse(child => child.geometry?.dispose());
       scene.remove(platformPivot);
@@ -156,14 +153,14 @@ export function createScene(canvas) {
       turbine.add(parts.platform);
     }
 
-    const tower = cylinder(2.4, 7, hubHeight, material, 24);
-    tower.position.y = hubHeight / 2 + 8;
+    const tower = new THREE.Mesh(createTowerGeometry(towerProfile, hubHeight), material);
+    const towerTop = towerProfile?.stations?.at(-1)?.elevation ?? hubHeight + 8;
     turbine.add(tower);
     const nacelle = new THREE.Mesh(new THREE.BoxGeometry(20, 7, 8), dark);
-    nacelle.position.set(5, hubHeight + 8, 0);
+    nacelle.position.set(5, towerTop, 0);
     turbine.add(nacelle);
     const hub = new THREE.Mesh(new THREE.SphereGeometry(4.8, 16, 12), accent);
-    hub.position.set(-6, hubHeight + 8, 0);
+    hub.position.set(-6, towerTop, 0);
     turbine.add(hub);
 
     rotor = new THREE.Group();
