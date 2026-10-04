@@ -20,6 +20,7 @@ dev = [
 [project.scripts]
 mcfast = "mcfast.cli:main"
 mcfast-run = "mcfast.runner:main"
+mcfast-study-run = "mcfast.study_cli:main"
 
 [build-system]
 requires = ["hatchling"]

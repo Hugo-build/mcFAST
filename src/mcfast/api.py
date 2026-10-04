@@ -17,8 +17,10 @@ import uuid
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 
+from .pipeline import execute_pipeline
+from .studies import StudyCoordinator, LOCAL_CAPACITY, atomic_json
 from .models import discover_models, model_geometry, referenced_files, safe_path
 from .parser import parse_file, update_file
 from .playback import read_playback
@@ -35,7 +37,16 @@ NATIVE_LIBRARY_SUFFIXES = {".dll", ".dylib", ".so"}
 WORKSPACE_ID_RE = re.compile(r"[a-z0-9_-]+")
 RUN_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
-app = FastAPI(title="mcFAST API", version="0.3.0")
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    _coordinator()
+    yield
+
+
+app = FastAPI(title="mcFAST API", version="0.3.0", lifespan=_lifespan)
 
 
 class UpdateRequest(BaseModel):
@@ -86,7 +97,7 @@ def _slug(value: str, fallback: str) -> str:
 
 
 def _json_write(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic_json(path, payload)
 
 
 def _hash_file(path: Path) -> str:
@@ -351,6 +362,7 @@ def _resolve_variables(workspace_id: str, variables: list[WorkspaceVariable]) ->
     allowed_files = {node["path"] for node in graph["files"]}
     allowed_files.update(candidate["path"] for candidate in discover_turbsim_inputs(project_root))
     names: set[str] = set()
+    bindings: set[tuple[str, str]] = set()
     resolved = []
     for variable in variables:
         name = variable.name.strip()
@@ -359,6 +371,10 @@ def _resolve_variables(workspace_id: str, variables: list[WorkspaceVariable]) ->
         if name in names:
             raise HTTPException(400, f"Duplicate variable name: {name}")
         names.add(name)
+        binding = (variable.file, variable.key)
+        if binding in bindings:
+            raise HTTPException(400, "Two variables cannot bind the same file and parameter")
+        bindings.add(binding)
         if variable.file not in allowed_files:
             raise HTTPException(400, f"'{variable.file}' is not linked by the workspace project")
         parsed = parse_file(safe_path(project_root, variable.file))
@@ -541,98 +557,22 @@ def _workspace_has_active_run(workspace_id: str) -> bool:
         )
 
 
-def _wind_run_metadata(payload: dict[str, Any], generated: bool = False) -> dict[str, Any]:
-    return {
-        "mode": payload["mode"],
-        "inflow_file": payload["inflow_file"],
-        "file_name_bts": payload["file_name_bts"],
-        "resolved_bts": payload["resolved_bts"],
-        "turbsim_input": payload["selected_turbsim_input"],
-        "managed_bts": payload["managed_bts"],
-        "generated": generated,
-        "generation_reason": "missing_or_stale" if generated else "not_required",
-    }
-
-
 def _execute_run(workspace_id: str, run_id: str, model_path: Path, executable: str) -> None:
     workspace_dir = _workspace_dir(workspace_id)
     results_root = workspace_dir / "results"
     run_dir = results_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "console.log"
-    wind_payload: dict[str, Any] | None = None
-    wind_metadata: dict[str, Any] | None = None
-    generated = False
     with RUNS_LOCK:
         started_at = RUNS[(workspace_id, run_id)]["started_at"]
     try:
-        with _workspace_run_lock(workspace_id):
-            _set_run(workspace_id, run_id, status="running", phase="preflight")
+        with LOCAL_CAPACITY.slot(), _workspace_run_lock(workspace_id):
             manifest = _workspace_manifest(workspace_id)
-            turbsim_executable = find_turbsim()
-            wind_payload = wind_status(
-                _project_root(workspace_id),
-                manifest["entry"],
-                manifest,
-                turbsim_executable=turbsim_executable,
-            )
-            if wind_payload["active"] and not wind_payload["valid"]:
-                raise RuntimeError(wind_payload["message"])
-
-            with log_path.open("a", encoding="utf-8") as log:
-                def emit(message: str) -> None:
-                    log.write(message)
-                    log.flush()
-
-                if wind_payload["mode"] == "managed":
-                    if wind_payload["needs_generation"]:
-                        if not turbsim_executable:
-                            raise RuntimeError("TurbSim executable not found in the active environment or PATH")
-                        input_path = project_path(
-                            _project_root(workspace_id),
-                            wind_payload["selected_turbsim_input"],
-                        )
-                        emit(f"TurbSim input: {input_path}\n")
-                        emit(f"TurbSim output: {input_path.with_suffix('.bts')}\n")
-                        emit(f"Command: {turbsim_executable} {input_path.name}\n\n")
-                        _set_run(workspace_id, run_id, phase="turbsim")
-                        return_code = run_turbsim(input_path, turbsim_executable, emit)
-                        if return_code != 0:
-                            raise RuntimeError(f"TurbSim failed with exit code {return_code}")
-                        output_path = input_path.with_suffix(".bts")
-                        if not output_path.is_file() or output_path.stat().st_size <= 0:
-                            raise RuntimeError(f"TurbSim did not create the expected non-empty output: {output_path.name}")
-                        generated = True
-                        emit("\nTurbSim wind field generated successfully.\n\n")
-                    else:
-                        emit(f"Reusing current TurbSim wind field: {wind_payload['resolved_bts']}\n\n")
-                elif wind_payload["mode"] == "external":
-                    emit(f"Using external TurbSim wind field without generation: {wind_payload['resolved_bts']}\n\n")
-
-            wind_metadata = _wind_run_metadata(wind_payload, generated)
-            if generated and turbsim_executable:
-                wind_metadata.update({
-                    "turbsim_executable": turbsim_executable,
-                    "turbsim_version": turbsim_version(turbsim_executable),
-                    "turbsim_return_code": 0,
-                })
-            geometry = model_geometry(_project_root(workspace_id), manifest["entry"])
-            _set_run(workspace_id, run_id, phase="openfast")
-            return_code, run_dir = run_openfast(
-                model_path,
-                executable,
-                results_root,
-                run_id,
-                echo_console=False,
-                manifest_metadata={
-                    "workspace_id": workspace_id,
-                    "workspace_entry": manifest["entry"],
-                    "phase": "complete" if generated or wind_payload["valid"] else "failed",
-                    "wind": wind_metadata,
-                    "geometry": geometry,
-                },
-                reuse_run_dir=True,
-                append_console=True,
+            return_code, run_dir = execute_pipeline(
+                _project_root(workspace_id), manifest, executable, find_turbsim(),
+                results_root, run_id,
+                phase=lambda value: _set_run(workspace_id, run_id, status="running", phase=value),
+                openfast_runner=run_openfast, turbsim_runner=run_turbsim,
             )
         manifest_path = run_dir / "manifest.json"
         if manifest_path.is_file():
@@ -656,7 +596,7 @@ def _execute_run(workspace_id: str, run_id: str, model_path: Path, executable: s
             "finished_at": finished_at,
             "model": _workspace_manifest(workspace_id)["entry"],
             "executable": executable,
-            "wind": wind_metadata or (_wind_run_metadata(wind_payload, generated) if wind_payload else None),
+            "wind": None,
             "outputs": [],
         }
         _json_write(run_dir / "manifest.json", failed_manifest)
@@ -698,6 +638,17 @@ def _run_payload(workspace_id: str, run_id: str, offset: int = 0) -> dict[str, A
             "error": manifest.get("error"),
             "phase": manifest.get("phase"),
         })
+    if not state:
+        coordinator = _coordinator()
+        with coordinator.lock:
+            for (run_workspace, batch_id), batch in coordinator.batches.items():
+                if run_workspace != workspace_id:
+                    continue
+                case = next((item for item in batch['cases'] if item['run_id'] == run_id), None)
+                if case:
+                    entry = json.loads((coordinator.directory(workspace_id, batch_id) / 'workspace.json').read_text())['entry']
+                    state = {**case, 'model': entry, 'started_at': batch['started_at']}
+                    break
     if not state:
         raise HTTPException(404, "Run not found")
     log_path = run_dir / "console.log"
@@ -798,13 +749,14 @@ def workspace_file(workspace_id: str, path: str = Query(...)) -> dict[str, Any]:
 @app.put("/api/workspaces/{workspace_id}/file")
 def edit_workspace_file(workspace_id: str, body: UpdateRequest, path: str = Query(...)) -> dict[str, Any]:
     try:
-        result = update_file(safe_path(_project_root(workspace_id), path), body.updates, body.expected_mtime_ns)
-        result["path"] = path
-        result["mtime_ns"] = str(result["mtime_ns"])
-        manifest = _workspace_manifest(workspace_id)
-        manifest["updated_at"] = _utc_now().isoformat()
-        _json_write(_workspace_dir(workspace_id) / "workspace.json", manifest)
-        return result
+        with _workspace_run_lock(workspace_id):
+            result = update_file(safe_path(_project_root(workspace_id), path), body.updates, body.expected_mtime_ns)
+            result["path"] = path
+            result["mtime_ns"] = str(result["mtime_ns"])
+            manifest = _workspace_manifest(workspace_id)
+            manifest["updated_at"] = _utc_now().isoformat()
+            _json_write(_workspace_dir(workspace_id) / "workspace.json", manifest)
+            return result
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     except (ValueError, FileNotFoundError, KeyError) as exc:
@@ -829,32 +781,33 @@ def workspace_wind(workspace_id: str) -> dict[str, Any]:
 def configure_workspace_wind(workspace_id: str, body: WindConfigurationRequest) -> dict[str, Any]:
     if _workspace_has_active_run(workspace_id):
         raise HTTPException(409, "Wait for the active workspace run before changing its TurbSim input")
-    manifest = _workspace_manifest(workspace_id)
-    project_root = _project_root(workspace_id)
-    found = find_inflow_file(project_root, manifest["entry"])
-    if not found:
-        raise HTTPException(400, "The workspace deck does not expose a linked InflowWind input")
-    inflow_relative, _ = found
-    try:
-        input_path, reference = managed_bts_reference(project_root, inflow_relative, body.turbsim_input)
-        update_file(
-            safe_path(project_root, inflow_relative),
-            {"FileName_BTS": reference},
-            body.expected_inflow_mtime_ns,
-        )
-        manifest["wind"] = {"turbsim_input": input_path.relative_to(project_root.resolve()).as_posix()}
-        manifest["updated_at"] = _utc_now().isoformat()
-        _json_write(_workspace_dir(workspace_id) / "workspace.json", manifest)
-        return wind_status(
-            project_root,
-            manifest["entry"],
-            manifest,
-            turbsim_executable=find_turbsim(),
-        )
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except (ValueError, FileNotFoundError, KeyError) as exc:
-        raise HTTPException(400, str(exc)) from exc
+    with _workspace_run_lock(workspace_id):
+        manifest = _workspace_manifest(workspace_id)
+        project_root = _project_root(workspace_id)
+        found = find_inflow_file(project_root, manifest["entry"])
+        if not found:
+            raise HTTPException(400, "The workspace deck does not expose a linked InflowWind input")
+        inflow_relative, _ = found
+        try:
+            input_path, reference = managed_bts_reference(project_root, inflow_relative, body.turbsim_input)
+            update_file(
+                safe_path(project_root, inflow_relative),
+                {"FileName_BTS": reference},
+                body.expected_inflow_mtime_ns,
+            )
+            manifest["wind"] = {"turbsim_input": input_path.relative_to(project_root.resolve()).as_posix()}
+            manifest["updated_at"] = _utc_now().isoformat()
+            _json_write(_workspace_dir(workspace_id) / "workspace.json", manifest)
+            return wind_status(
+                project_root,
+                manifest["entry"],
+                manifest,
+                turbsim_executable=find_turbsim(),
+            )
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, FileNotFoundError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/workspaces/{workspace_id}/studies")
@@ -924,6 +877,8 @@ def workspace_runs(workspace_id: str) -> dict[str, Any]:
                     "finished_at": payload.get("finished_at"),
                     "model": payload.get("model"),
                     "phase": payload.get("phase"),
+                    "study_name": payload.get("study_name"),
+                    "sample_index": payload.get("sample_index"),
                 }
             except (OSError, json.JSONDecodeError, KeyError):
                 continue
@@ -931,6 +886,13 @@ def workspace_runs(workspace_id: str) -> dict[str, Any]:
         for (run_workspace_id, run_id), state in RUNS.items():
             if run_workspace_id == workspace_id and run_id not in items:
                 items[run_id] = {"run_id": run_id, **state}
+    coordinator = _coordinator()
+    with coordinator.lock:
+        for (run_workspace, _), batch in coordinator.batches.items():
+            if run_workspace == workspace_id:
+                for case in batch['cases']:
+                    if case['target'] and case['run_id'] not in items:
+                        items[case['run_id']] = {**case, 'study_name': batch['study_name'], 'started_at': batch['started_at']}
     return {"runs": sorted(items.values(), key=lambda item: item.get("started_at") or "", reverse=True)}
 
 
@@ -1034,6 +996,91 @@ def workspace_run_artifact(workspace_id: str, run_id: str, filename: str) -> Fil
     if run_dir not in target.parents or not target.is_file():
         raise HTTPException(404, "Artifact not found")
     return FileResponse(target, filename=target.name)
+
+
+
+
+class BatchRequest(BaseModel):
+    study_id: str
+    slots: dict[str, StrictInt]
+    dry_run: bool = False
+
+
+class RetryRequest(BaseModel):
+    slots: dict[str, StrictInt]
+
+
+COORDINATORS: dict[Path, StudyCoordinator] = {}
+COORDINATORS_LOCK = threading.Lock()
+
+
+def _coordinator() -> StudyCoordinator:
+    with COORDINATORS_LOCK:
+        if WORKSPACE_ROOT not in COORDINATORS:
+            COORDINATORS[WORKSPACE_ROOT] = StudyCoordinator(WORKSPACE_ROOT)
+        return COORDINATORS[WORKSPACE_ROOT]
+
+
+@app.get("/api/simulation/targets")
+def simulation_targets() -> dict:
+    return {"targets": _coordinator().target_list()}
+
+
+@app.post("/api/workspaces/{workspace_id}/batches", status_code=202)
+def launch_study_batch(workspace_id: str, body: BatchRequest) -> dict:
+    try:
+        with _workspace_run_lock(workspace_id):
+            payload = _normalize_study(json.loads(_study_path(workspace_id, body.study_id).read_text()))
+            manifest, variables = _resolve_variables(workspace_id, [WorkspaceVariable(**{
+                key: variable[key] for key in ("name", "file", "key")
+            }) for variable in payload["variables"]])
+            payload.update(variables=variables, samples=_validate_samples(variables, payload['samples']))
+            coordinator = _coordinator()
+            coordinator.validate(body.slots, payload)
+            if body.dry_run:
+                return {"valid": True, "study_id": body.study_id, "sample_count": len(payload['samples']), "slots": body.slots}
+            return coordinator.launch(workspace_id, payload, body.slots, manifest)
+    except (ValueError, KeyError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/workspaces/{workspace_id}/batches")
+def study_batch_history(workspace_id: str) -> dict:
+    _workspace_manifest(workspace_id)
+    coordinator = _coordinator()
+    with coordinator.lock:
+        return {"batches": [coordinator.view(workspace_id, identifier, page_size=1)
+                            for (workspace, identifier) in reversed(list(coordinator.batches)) if workspace == workspace_id]}
+
+
+@app.get("/api/workspaces/{workspace_id}/batches/{batch_id}")
+def study_batch_status(workspace_id: str, batch_id: str, page: int = Query(1, ge=1),
+                       page_size: int = Query(50, ge=1, le=200)) -> dict:
+    _workspace_manifest(workspace_id)
+    try:
+        return _coordinator().view(workspace_id, batch_id, page, page_size)
+    except KeyError as exc:
+        raise HTTPException(404, "Batch not found") from exc
+
+
+@app.post("/api/workspaces/{workspace_id}/batches/{batch_id}/stop")
+def stop_study_batch(workspace_id: str, batch_id: str) -> dict:
+    _workspace_manifest(workspace_id)
+    try:
+        return _coordinator().stop(workspace_id, batch_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Batch not found") from exc
+
+
+@app.post("/api/workspaces/{workspace_id}/batches/{batch_id}/retry", status_code=202)
+def retry_study_batch(workspace_id: str, batch_id: str, body: RetryRequest) -> dict:
+    _workspace_manifest(workspace_id)
+    try:
+        return _coordinator().retry(workspace_id, batch_id, body.slots)
+    except KeyError as exc:
+        raise HTTPException(404, "Batch not found") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 WEB_DIST = PROJECT_ROOT / "web" / "dist"

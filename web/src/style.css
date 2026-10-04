@@ -399,3 +399,26 @@ button:focus-visible, select:focus-visible, input:focus-visible, .file-node:focu
 @media (max-width: 1200px) {
   .results-panel { position: absolute; right: 48px; top: 0; bottom: 0; width: min(480px, calc(100vw - 96px)); z-index: 24; box-shadow: -8px 0 24px #0003; }
 }
+
+.simulation-panel { padding: 18px; overflow: auto; }
+.simulation-panel h2 { margin: 0 0 12px; font-size: 17px; }
+.simulation-panel p, .simulation-panel small { color: var(--text-dim); font-size: 12px; line-height: 1.5; }
+.simulation-panel select, .simulation-panel input, .simulation-panel textarea { padding: 8px; border-radius: 5px; border: 1px solid var(--border, #3d4757); background: var(--panel-elevated); color: var(--text, #e0e8f1); max-width: 100%; }
+.simulation-panel > select { width: 100%; margin: 8px 0; }
+.simulation-target { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border, #3d4757); }
+.simulation-target small { white-space: pre-wrap; overflow-wrap: anywhere; }
+.simulation-target input[type=number] { width: 76px; }
+.simulation-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; align-items: center; }
+.simulation-target-form { display: grid; gap: 12px; padding-top: 12px; }
+.simulation-target-form label { display: grid; gap: 5px; font-size: 12px; }
+.simulation-panel details { margin: 16px 0; }
+.simulation-panel summary { cursor: pointer; font-size: 13px; }
+.simulation-error { color: #df7980 !important; }
+.simulation-cases td { font-size: 11px; padding: 8px; overflow-wrap: anywhere; }
+.simulation-cases th { padding: 8px; }
+.simulation-panel button:disabled { opacity: .45; cursor: default; }
+
+.simulation-cases { width: 100%; table-layout: auto; }
+.simulation-cases th, .simulation-cases td { min-width: 0; }
+.simulation-cases button { padding: 6px; font-size: 10px; }
+.simulation-panel .simulation-run { background: var(--blue); color: var(--on-blue); border-color: var(--blue); }

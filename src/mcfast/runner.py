@@ -12,6 +12,12 @@ from typing import Callable
 import uuid
 
 
+def single_thread_environment() -> dict[str, str]:
+    return {**os.environ, **{key: "1" for key in (
+        "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS")}, "OMP_DYNAMIC": "FALSE"}
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -67,6 +73,7 @@ def run_turbsim(input_file: Path, executable: str, emit: Callable[[str], None] |
     process = subprocess.Popen(
         [executable, input_file.name],
         cwd=input_file.parent,
+        env=single_thread_environment(),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -119,6 +126,7 @@ def run_openfast(
             process = subprocess.Popen(
                 command,
                 cwd=model.parent,
+                env=single_thread_environment(),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

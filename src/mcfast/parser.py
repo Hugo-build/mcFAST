@@ -17,7 +17,7 @@ from typing import Any, Iterable
 
 KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_()\[\]]*$")
 REFERENCE_EXTENSIONS = {
-    ".fst", ".dat", ".txt", ".inp", ".ipt", ".yaml", ".yml", ".dll", ".so", ".dylib"
+    ".fst", ".dat", ".txt", ".in", ".inp", ".ipt", ".yaml", ".yml", ".dll", ".so", ".dylib"
 }
 
 

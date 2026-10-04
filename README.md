@@ -210,3 +210,60 @@ cd web && npm test && npm run build
 
 The integration test uses the downloaded official IEA 15 MW VolturnUS-S deck;
 without it, only that test is skipped.
+
+## Parallel study simulations
+
+Save the variables and case table in **Variable Study**, then open **Simulation**
+from the left feature bar. Select the saved study and choose local worker slots. The local recommendation leaves one usable CPU for the application.
+Capacity describes CPUs available to the process, not a measurement of idle CPUs;
+large models also need sufficient memory and disk space.
+
+**Run Study** freezes the project and sample table. Each active sample gets a
+separate project copy, applies its scalar values, and runs the managed
+TurbSim/OpenFAST pipeline. Changed managed TurbSim inputs regenerate their wind
+fields. Original workspace inputs remain editable after the snapshot is created.
+One slot covers preparation and execution. Native processes
+use one computational thread, including OpenMP and common numerical libraries.
+Ordinary UI runs share the local capacity limiter.
+
+The panel shows sample status, execution phase, and result links. **OPEN** uses the existing console, playback, and graphs. Failed samples
+do not stop the other cases. **Stop New Cases** cancels queued cases while active simulations finish. **Retry Failed Cases** creates new
+attempts using the original snapshot and sample numbers; previous results remain.
+One batch may be active per workspace.
+
+After refreshing the project environment with `uv sync --extra dev`, start the
+server with `uv run mcfast`. In another terminal:
+
+```bash
+uv run mcfast-study-run --workspace WORKSPACE_ID --study STUDY_ID --local-workers 4
+uv run mcfast-study-run --workspace WORKSPACE_ID --study STUDY_ID --dry-run
+```
+
+The CLI connects to the server at `http://127.0.0.1:8000`; use `--server` to change
+that address. With no allocations it selects the local recommendation. Dry-run
+checks the saved variable bindings, sample types, local readiness, and slot
+limits without launching a batch. Case-specific native input validation occurs
+when each case starts. Ctrl+C stops new dispatches; active cases finish on the
+server.
+
+### SSH setup
+
+The Simulation sidebar retains two optional setup fields: SSH login/host and
+remote folder. These are saved in this browser for future configuration;
+connecting, browsing remote folders, remote execution, and Slurm are not enabled.
+Simulation execution currently uses local workers only.
+
+Batch records and frozen inputs live under `workspaces/WORKSPACE_ID/batches/`;
+case outputs use the standard workspace `results/` directory. Unfinished cases
+are marked interrupted after server restart and require explicit retry. Run one
+mcFAST server process against a workspace directory and avoid reloads during
+active simulations.
+
+Additional APIs:
+
+- `GET /api/simulation/targets` reports local capacity and readiness.
+- `POST /api/workspaces/{id}/batches` accepts `study_id`, `slots: {"local": N}`, and optional `dry_run`.
+- `GET /api/workspaces/{id}/batches` lists batch history.
+- `GET /api/workspaces/{id}/batches/{batch}` accepts `page` and `page_size`.
+- `POST /api/workspaces/{id}/batches/{batch}/stop` stops new dispatches.
+- `POST /api/workspaces/{id}/batches/{batch}/retry` accepts new local `slots`.

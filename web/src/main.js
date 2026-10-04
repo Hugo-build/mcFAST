@@ -1,3 +1,4 @@
+import { createSimulationPanel } from './simulation-panel.js';
 import './style.css';
 import { createScene } from './scene.js';
 import { createPlayback } from './playback.js';
@@ -69,9 +70,9 @@ function selectFeature(feature, toggle = false) {
   const collapsed = toggle && activeFeature === feature && !sidePanel.classList.contains('collapsed');
   activeFeature = feature;
   sidePanel.classList.toggle('collapsed', collapsed);
-  sidePanel.classList.toggle('study-active', feature === 'study');
+  sidePanel.classList.toggle('study-active', feature === 'study' || feature === 'simulation');
   sidePanel.inert = collapsed;
-  document.querySelector('#panelTitle').textContent = { files: 'WORKSPACE FILES', geometry: 'GEOMETRY', study: 'VARIABLE STUDY' }[feature];
+  document.querySelector('#panelTitle').textContent = { files: 'WORKSPACE FILES', geometry: 'GEOMETRY', study: 'VARIABLE STUDY', simulation: 'SIMULATION' }[feature];
   for (const button of featureButtons) {
     const selected = button.dataset.feature === feature && !collapsed;
     button.classList.toggle('active', selected);
@@ -79,6 +80,7 @@ function selectFeature(feature, toggle = false) {
     button.setAttribute('aria-expanded', String(selected));
     document.querySelector(`#${button.dataset.feature}Panel`).hidden = button.dataset.feature !== feature;
   }
+  if (feature === 'simulation' && !collapsed) simulationPanel.refresh().catch(error => notify(error.message));
   if (feature === 'study' && !collapsed && !workspaceForm.inert && activeModel && studyWorkspaceId !== activeWorkspace?.workspace_id) resetStudyForm();
 }
 
@@ -135,6 +137,7 @@ let parameterControlSequence = 0;
 let variableSequence = 0;
 let caseSequence = 0;
 let caseRows = [];
+let studyDirty = false;
 const parameterCache = new Map();
 
 function workspaceUrl(path = '') {
@@ -602,6 +605,7 @@ async function loadWorkspace(workspaceId) {
     if (generation !== playbackGeneration) return;
     const workspaceChanged = activeWorkspace?.workspace_id !== model.workspace.workspace_id;
     activeWorkspace = model.workspace;
+    simulationPanel.setWorkspace(activeWorkspace.workspace_id);
     activeModel = model;
     activeWind = wind;
     parameterCache.clear();
@@ -837,6 +841,7 @@ function addVariable(preferredFile = null, preferredKey = '') {
 }
 
 function resetStudyForm() {
+  studyDirty = false;
   studyGeneration++;
   createWorkspaceBtn.disabled = false;
   studyWorkspaceId = activeWorkspace?.workspace_id ?? null;
@@ -895,6 +900,7 @@ async function openSavedStudy(studyId) {
     row.querySelector('[data-role="name"]').dataset.edited = 'true';
   }
   const variables = collectVariables();
+  studyDirty = false;
   caseRows = study.samples.map(sample => ({
     id: `case-${++caseSequence}`,
     selected: false,
@@ -961,6 +967,7 @@ async function saveStudy(event) {
       }),
     });
     if (generation !== studyGeneration) return;
+    studyDirty = false;
     editingStudyId = result.study_id;
     await loadStudies();
     if (generation !== studyGeneration) return;
@@ -1022,7 +1029,8 @@ function renderArtifacts(artifacts) {
 
 function formatRunLabel(run) {
   const timestamp = run.started_at ? new Date(run.started_at).toLocaleString() : 'Current session';
-  return `${timestamp} · ${run.status.toUpperCase()}`;
+  const sample = run.study_name ? ` · ${run.study_name} · sample ${run.sample_index + 1}` : '';
+  return `${timestamp}${sample} · ${run.status.toUpperCase()}`;
 }
 
 async function loadRunHistory(selectedRunId = '') {
@@ -1301,7 +1309,49 @@ async function boot() {
   }
 }
 
+async function updateStudyConsole(runId) {
+  const workspaceId = activeWorkspace?.workspace_id;
+  if (!workspaceId || currentRunId !== runId) return true;
+  const state = await request(workspaceUrl(`/runs/${encodeURIComponent(runId)}?offset=0`));
+  if (activeWorkspace?.workspace_id !== workspaceId || currentRunId !== runId) return true;
+  resultsDrawer.classList.add('open');
+  document.querySelector('#drawerHeader').setAttribute('aria-expanded', 'true');
+  consoleOutput.textContent = state.console || 'Waiting for case console output…';
+  runBadge.textContent = state.status.toUpperCase().replaceAll('_', ' ');
+  runBadge.className = 'fault-badge running';
+  renderArtifacts(state.artifacts);
+  if (['completed', 'failed', 'cancelled', 'interrupted'].includes(state.status)) {
+    await loadRunHistory(runId);
+    await showHistoricalRun(runId);
+    return true;
+  }
+  return false;
+}
+
+const simulationPanel = createSimulationPanel({
+  request,
+  hasUnsavedStudy: () => studyDirty,
+  onResult: async (runId, state) => {
+    await loadRunHistory(runId);
+    if (['completed', 'failed', 'cancelled', 'interrupted'].includes(state)) await showHistoricalRun(runId);
+    else {
+      currentRunId = runId;
+      resetPlayback('Playback becomes available when this case completes.');
+      await updateStudyConsole(runId);
+    }
+  },
+  onProgress: updateStudyConsole,
+  notify,
+});
+
 requestAnimationFrame(renderTelemetry);
 applyTheme(document.documentElement.dataset.theme, false);
 renderCaseTable();
 boot();
+
+
+workspaceForm.addEventListener('input', () => { studyDirty = true; });
+workspaceForm.addEventListener('change', event => { if (event.target !== studySelect) studyDirty = true; });
+workspaceForm.addEventListener('click', event => {
+  if (event.target.closest('#addVariableBtn, #emptyVariableBtn, #addCaseBtn, #emptyCaseBtn, #clearCasesBtn, #clearSelectedCasesBtn, .remove-variable')) studyDirty = true;
+});
