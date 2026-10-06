@@ -265,6 +265,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, .file-node:focu
 .variable-columns, .variable-row { display: grid; grid-template-columns: minmax(120px, .8fr) minmax(180px, 1.2fr) minmax(210px, 1.35fr) 28px; gap: 8px; }
 .variable-columns { padding: 0 10px 6px; color: var(--text-faint); font: 8px var(--font-mono); letter-spacing: .07em; }
 .variable-list { display: flex; flex-direction: column; gap: 6px; }
+.variable-actions { margin-top: 12px; }
 .variable-row { align-items: center; padding: 8px; background: var(--panel-elevated); border: 1px solid var(--border-soft); border-radius: 5px; }
 .variable-row input, .variable-row select { min-width: 0; width: 100%; height: 32px; padding: 0 8px; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: 3px; outline: none; font: 10px var(--font-mono); }
 .variable-row input:focus, .variable-row select:focus { border-color: var(--blue); }
@@ -422,3 +423,14 @@ button:focus-visible, select:focus-visible, input:focus-visible, .file-node:focu
 .simulation-cases th, .simulation-cases td { min-width: 0; }
 .simulation-cases button { padding: 6px; font-size: 10px; }
 .simulation-panel .simulation-run { background: var(--blue); color: var(--on-blue); border-color: var(--blue); }
+
+.uq-content { padding: 14px; overflow-y: auto; height: 100%; }
+.uq-content h2 { font: 600 17px var(--font-display); }
+.uq-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.uq-normal { grid-column: 1 / -1; }
+.uq-variable .uq-grid > .field:has(select) { grid-column: 1 / -1; }
+.uq-normal[hidden], #uqForm[hidden] { display: none; }
+.uq-variable { padding: 12px; border: 1px solid var(--border-soft); border-radius: 5px; background: var(--panel-elevated); }
+.uq-variable > strong { display: block; font: 500 12px var(--font-body); }
+.uq-variable > small { display: block; margin-top: 5px; color: var(--text-faint); font: 9px/1.5 var(--font-mono); overflow-wrap: anywhere; }
+#uqPreview pre { max-height: 220px; overflow: auto; padding: 10px; background: var(--input-bg); font: 10px/1.5 var(--font-mono); }

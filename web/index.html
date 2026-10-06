@@ -43,6 +43,7 @@
           <button class="feature-button active" data-feature="files" type="button" title="Files" aria-label="Files" aria-controls="filesPanel" aria-expanded="true" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v12H3Z"/><path d="M3 6V4h7l2 2"/></svg><span class="feature-tooltip">Files</span></button>
           <button class="feature-button" data-feature="geometry" type="button" title="Geometry" aria-label="Geometry" aria-controls="geometryPanel" aria-expanded="false" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5v9l-9 5-9-5V8Z"/><path d="m3 8 9 5 9-5M12 13v9M12 3v10"/></svg><span class="feature-tooltip">Geometry</span></button>
           <button class="feature-button" data-feature="study" type="button" title="Variable Study" aria-label="Variable Study" aria-controls="studyPanel" aria-expanded="false" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h9m4 0h3M4 12h3m4 0h9M4 18h10m4 0h2M13 3v6m-6 0v6m7 0v6"/></svg><span class="feature-tooltip">Variable Study</span></button>
+          <button class="feature-button" data-feature="uq" type="button" title="UQ Method" aria-label="UQ Method" aria-controls="uqPanel" aria-expanded="false" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M4 17c4 0 4-12 8-12s4 12 8 12M12 3v17"/></svg><span class="feature-tooltip">UQ Method</span></button>
           <button class="feature-button" data-feature="simulation" type="button" title="Simulation" aria-label="Simulation" aria-controls="simulationPanel" aria-expanded="false" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7Z"/><path d="M3 5v14"/></svg><span class="feature-tooltip">Simulation</span></button>
         </nav>
         <aside class="side-panel" id="sidePanel" aria-label="Workspace features">
@@ -105,13 +106,15 @@
                 <section class="modal-section variable-section">
                   <div class="modal-section-heading">
                     <div><span class="step-number">01</span><div><h3>Variables</h3><p>Select a linked file, then bind its exact parameter key.</p></div></div>
-                    <button class="secondary-btn" id="addVariableBtn" type="button"><span>＋</span> ADD VARIABLE</button>
                   </div>
                   <div class="variable-columns" aria-hidden="true"><span>VARIABLE NAME</span><span>INPUT FILE</span><span>EXACT PARAMETER</span><span></span></div>
                   <div class="variable-list" id="variableList"></div>
                   <button class="empty-variable" id="emptyVariableBtn" type="button">
                     <span>＋</span><b>Add the first variable</b><small>Choose from any input file linked to this model.</small>
                   </button>
+                  <div class="variable-actions">
+                    <button class="secondary-btn" id="addVariableBtn" type="button"><span>＋</span> ADD VARIABLE</button>
+                  </div>
                 </section>
 
                 <section class="modal-section case-section">
@@ -148,6 +151,8 @@
               </footer>
             </form>
           </section>
+
+          <section class="feature-panel study-panel" id="uqPanel" aria-label="UQ Method" hidden></section>
 
           <section class="panel-body feature-panel simulation-panel" id="simulationPanel" aria-label="Study simulations" hidden></section>
         </aside>

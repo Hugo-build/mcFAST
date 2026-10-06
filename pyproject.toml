@@ -8,6 +8,7 @@ dependencies = [
   "fastapi>=0.116.0",
   "openfast-io>=4.1.0",
   "python-multipart>=0.0.20",
+  "scipy>=1.15.0",
   "uvicorn[standard]>=0.35.0",
 ]
 
@@ -21,6 +22,7 @@ dev = [
 mcfast = "mcfast.cli:main"
 mcfast-run = "mcfast.runner:main"
 mcfast-study-run = "mcfast.study_cli:main"
+mcfast-slurm = "mcfast.slurm:main"
 
 [build-system]
 requires = ["hatchling"]

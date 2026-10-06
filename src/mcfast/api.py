@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StrictInt
 
 from .pipeline import execute_pipeline
+from .uq import sample_uq, validate_uq
 from .studies import StudyCoordinator, LOCAL_CAPACITY, atomic_json
 from .models import discover_models, model_geometry, referenced_files, safe_path
 from .parser import parse_file, update_file
@@ -74,6 +75,12 @@ class StudyRequest(BaseModel):
     name: str
     variables: list[WorkspaceVariable]
     samples: list[dict[str, Any]]
+    uq: dict[str, Any] | None = None
+    expected_updated_at: str | None = None
+
+
+class UqRequest(BaseModel):
+    uq: dict[str, Any]
 
 
 class CsvImportRequest(BaseModel):
@@ -488,7 +495,11 @@ def _resolve_study(workspace_id: str, body: StudyRequest, study_id: str | None =
     if not body.name.strip():
         raise HTTPException(400, "Enter a study name")
     manifest, resolved_variables = _resolve_variables(workspace_id, body.variables)
-    samples = _validate_samples(resolved_variables, body.samples)
+    samples = _validate_samples(resolved_variables, body.samples) if body.samples else []
+    try:
+        uq = validate_uq(resolved_variables, body.uq) if body.uq is not None else None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     now = _utc_now().isoformat()
     studies_dir = _workspace_dir(workspace_id) / "studies"
     studies_dir.mkdir(exist_ok=True)
@@ -496,6 +507,8 @@ def _resolve_study(workspace_id: str, body: StudyRequest, study_id: str | None =
     if study_id:
         target = _study_path(workspace_id, study_id)
         previous = json.loads(target.read_text(encoding="utf-8"))
+        if body.expected_updated_at is not None and previous.get("updated_at") != body.expected_updated_at:
+            raise HTTPException(409, "Study changed. Reload it before saving UQ samples.")
         created_at = previous.get("created_at", now)
     else:
         study_id = f"{_slug(body.name, 'variable-study')}-{uuid.uuid4().hex[:6]}"
@@ -510,6 +523,7 @@ def _resolve_study(workspace_id: str, body: StudyRequest, study_id: str | None =
         "workspace_entry": manifest["entry"],
         "variables": resolved_variables,
         "samples": samples,
+        "uq": uq,
     }
     _json_write(target, payload)
     return payload
@@ -846,6 +860,17 @@ def study(workspace_id: str, study_id: str) -> dict[str, Any]:
 @app.put("/api/workspaces/{workspace_id}/studies/{study_id}")
 def update_study(workspace_id: str, study_id: str, body: StudyRequest) -> dict[str, Any]:
     return _study_summary(_resolve_study(workspace_id, body, study_id))
+
+
+@app.post("/api/workspaces/{workspace_id}/studies/{study_id}/sample")
+def sample_study(workspace_id: str, study_id: str, body: UqRequest) -> dict[str, Any]:
+    payload = json.loads(_study_path(workspace_id, study_id).read_text(encoding="utf-8"))
+    _, variables = _resolve_variables(workspace_id, [WorkspaceVariable(**v) for v in payload['variables']])
+    try:
+        config, samples = sample_uq(variables, body.uq)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"uq": config, "samples": _validate_samples(variables, samples)}
 
 
 @app.get("/api/workspaces/{workspace_id}/studies/{study_id}/download")

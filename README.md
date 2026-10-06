@@ -118,8 +118,8 @@ panel preserves current selections.
 
 ## Left feature panels
 
-The persistent icon bar switches between **Files**, **Geometry**, and
-**Variable Study**. Click the active icon to collapse the panel, or another
+The persistent icon bar switches between **Files**, **Geometry**,
+**Variable Study**, **UQ Method**, and **Simulation**. Click the active icon to collapse the panel, or another
 icon to switch features. The workspace selector is shared across all panels.
 The study editor uses a wider panel on desktop and an overlay on small screens;
 unsaved values survive panel switches but reset when changing workspaces.
@@ -149,6 +149,24 @@ ancillary blade, airfoil, wind, controller, and hydrodynamic files) under
 `workspaces/<workspace-id>/project/`. Variable bindings and case rows are saved
 under `workspaces/<workspace-id>/studies/`; the study panel also provides a direct
 JSON download.
+
+Variable definitions can be saved with an empty case table, then loaded in
+**UQ Method**. Set minimum and maximum bounds for each numeric variable and
+choose uniform or truncated normal sampling (mean and positive standard
+deviation). Integer variables use discrete uniform sampling with inclusive
+integer bounds; Boolean and text variables retain their model values.
+Distributions are independent. Choose **Monte Carlo**, **Latin hypercube (LHS)**,
+**Sobol (scrambled)**, or **Halton (scrambled)**, then set the case count and seed.
+Sobol requires a power-of-two count (1–65,536) to preserve sequence balance;
+the other methods support any count within the study limits. LHS stratifies
+each numeric variable into equal-probability intervals. Sobol and Halton use
+scrambled low-discrepancy sequences. All methods map samples through the same
+bounded distributions, with fixed variables excluded from sampling dimensions.
+The selected method is saved with the study and restored when reopened.
+Choose **Generate Preview**. Previewing leaves the saved study unchanged.
+**Save Samples to Study** replaces its case table and saves the UQ configuration
+in the study JSON. Open **Simulation** to run those cases. Sampling supports up
+to 100,000 cases and 1,000,000 total values; a study with no cases cannot run.
 
 ## TurbSim wind fields
 
@@ -246,12 +264,75 @@ limits without launching a batch. Case-specific native input validation occurs
 when each case starts. Ctrl+C stops new dispatches; active cases finish on the
 server.
 
+### Slurm studies across multiple nodes
+
+The standalone [scripts/mcfast-study.slurm](scripts/mcfast-study.slurm) script
+runs saved cases on multiple nodes without a web server. Its defaults request
+10 nodes and 8 single-CPU workers per node (up to 80 concurrent cases), a
+2-hour wall time, and 4 GB per CPU. Each worker handles its own subset of cases
+sequentially. Override these defaults with `sbatch` options.
+
+Run preparation on the cluster, from a Linux mcFAST checkout on a filesystem
+shared by the login and compute nodes. Copy/import the workspace there first,
+install the environment with `uv sync --extra dev`, and load the site's
+OpenFAST/TurbSim modules. The model's native controller libraries must also be
+compatible with the cluster. All compute nodes need the same Python environment,
+executables, snapshot, and result paths.
+
+```bash
+# From the mcFAST checkout on the cluster:
+export MCFAST_PYTHON="$PWD/.venv/bin/python"
+
+# Optional explicit paths override executable discovery:
+# export MCFAST_OPENFAST=/shared/software/bin/openfast
+# export MCFAST_TURBSIM=/shared/software/bin/turbsim
+
+SNAPSHOT=$(uv run mcfast-slurm prepare \
+  --workspace WORKSPACE_ID --study STUDY_ID)
+
+sbatch --account=ACCOUNT --partition=PARTITION \
+  --nodes=10 --ntasks-per-node=8 --time=02:00:00 --mem-per-cpu=4G \
+  scripts/mcfast-study.slurm "$SNAPSHOT"
+```
+
+Replace the account/partition values with your site's settings, or omit those
+options when defaults apply. `--ntasks-per-node` is the number of simultaneous
+cases per node. Choose memory for each case and a wall time that covers all
+cases assigned to each worker, including input copying and wind generation.
+Wall time is a scheduling request, not automatically inferred from node choice.
+For example, 160 cases on 80 workers usually require roughly two case runtimes
+plus preparation overhead. Unequal case durations may increase that estimate.
+
+`prepare` validates the saved bindings and sample types, then freezes the study
+and project in `workspaces/WORKSPACE_ID/slurm/slurm-RUN_ID/`. Subsequent edits to
+the saved study do not affect the snapshot. Each case gets a separate project
+copy and result directory. Native solvers use one computational thread per
+case. A failed case is recorded while other workers continue; the job exits
+with failure if any worker reports failed cases.
+
+```bash
+squeue -j JOB_ID -o "%.18i %.10T %.6D %N"
+sacct -j JOB_ID --format=JobID,State,NNodes,NodeList,ExitCode
+uv run mcfast-slurm status --snapshot "$SNAPSHOT"
+uv run mcfast-slurm status --snapshot "$SNAPSHOT" --details
+```
+
+This is one multi-node job, rather than a job array. Case logs and outputs use
+the existing `workspaces/WORKSPACE_ID/results/` layout and appear in the app's
+run history when it opens that workspace. Slurm progress is read through the
+standalone `status` command; this job is not managed by the local Simulation
+batch coordinator. Cancel it with `scancel JOB_ID`. After cancellation or
+wall-time expiry, unfinished case records can still say `running`; check Slurm
+accounting for the job's final state. Prepare a new snapshot before rerunning;
+workers refuse to overwrite case directories from an earlier attempt.
+
 ### SSH setup
 
 The Simulation sidebar retains two optional setup fields: SSH login/host and
 remote folder. These are saved in this browser for future configuration;
-connecting, browsing remote folders, remote execution, and Slurm are not enabled.
-Simulation execution currently uses local workers only.
+connecting, browsing remote folders, and remote execution through the sidebar
+are not enabled. The Simulation panel uses local workers; submit Slurm studies
+with the standalone script described above.
 
 Batch records and frozen inputs live under `workspaces/WORKSPACE_ID/batches/`;
 case outputs use the standard workspace `results/` directory. Unfinished cases

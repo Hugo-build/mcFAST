@@ -1,3 +1,4 @@
+import { createUqPanel } from './uq-panel.js';
 import { createSimulationPanel } from './simulation-panel.js';
 import './style.css';
 import { createScene } from './scene.js';
@@ -70,9 +71,9 @@ function selectFeature(feature, toggle = false) {
   const collapsed = toggle && activeFeature === feature && !sidePanel.classList.contains('collapsed');
   activeFeature = feature;
   sidePanel.classList.toggle('collapsed', collapsed);
-  sidePanel.classList.toggle('study-active', feature === 'study' || feature === 'simulation');
+  sidePanel.classList.toggle('study-active', feature === 'study' || feature === 'simulation' || feature === 'uq');
   sidePanel.inert = collapsed;
-  document.querySelector('#panelTitle').textContent = { files: 'WORKSPACE FILES', geometry: 'GEOMETRY', study: 'VARIABLE STUDY', simulation: 'SIMULATION' }[feature];
+  document.querySelector('#panelTitle').textContent = { files: 'WORKSPACE FILES', geometry: 'GEOMETRY', study: 'VARIABLE STUDY', simulation: 'SIMULATION', uq: 'UQ METHOD' }[feature];
   for (const button of featureButtons) {
     const selected = button.dataset.feature === feature && !collapsed;
     button.classList.toggle('active', selected);
@@ -80,6 +81,7 @@ function selectFeature(feature, toggle = false) {
     button.setAttribute('aria-expanded', String(selected));
     document.querySelector(`#${button.dataset.feature}Panel`).hidden = button.dataset.feature !== feature;
   }
+  if (feature === 'uq' && !collapsed) uqPanel.refresh().catch(error => notify(error.message));
   if (feature === 'simulation' && !collapsed) simulationPanel.refresh().catch(error => notify(error.message));
   if (feature === 'study' && !collapsed && !workspaceForm.inert && activeModel && studyWorkspaceId !== activeWorkspace?.workspace_id) resetStudyForm();
 }
@@ -138,6 +140,8 @@ let variableSequence = 0;
 let caseSequence = 0;
 let caseRows = [];
 let studyDirty = false;
+let studyUq = null;
+let studyBindings = null;
 const parameterCache = new Map();
 
 function workspaceUrl(path = '') {
@@ -591,6 +595,7 @@ function renderFileTree(files) {
 }
 
 async function loadWorkspace(workspaceId) {
+  uqPanel.setWorkspace(null);
   resultsPanel.reset(workspaceId);
   resetPlayback();
   workspaceForm.inert = true;
@@ -606,6 +611,7 @@ async function loadWorkspace(workspaceId) {
     const workspaceChanged = activeWorkspace?.workspace_id !== model.workspace.workspace_id;
     activeWorkspace = model.workspace;
     simulationPanel.setWorkspace(activeWorkspace.workspace_id);
+    uqPanel.setWorkspace(activeWorkspace.workspace_id);
     activeModel = model;
     activeWind = wind;
     parameterCache.clear();
@@ -841,6 +847,7 @@ function addVariable(preferredFile = null, preferredKey = '') {
 }
 
 function resetStudyForm() {
+  studyUq = null; studyBindings = null;
   studyDirty = false;
   studyGeneration++;
   createWorkspaceBtn.disabled = false;
@@ -874,6 +881,7 @@ async function loadStudies() {
   savedStudies.forEach(study => studySelect.add(new Option(
     `${study.name} · ${study.sample_count} cases`, study.study_id,
   )));
+  if (activeFeature === 'uq') await uqPanel.refresh();
 }
 
 async function openSavedStudy(studyId) {
@@ -882,6 +890,8 @@ async function openSavedStudy(studyId) {
   const workspaceId = activeWorkspace.workspace_id;
   const study = await request(workspaceUrl(`/studies/${encodeURIComponent(studyId)}`));
   if (generation !== studyGeneration || workspaceId !== activeWorkspace?.workspace_id) return;
+  studyUq = study.uq ?? null;
+  studyBindings = JSON.stringify(study.variables.map(({ name, file, key }) => ({ name, file, key })));
   editingStudyId = study.study_id;
   studyWorkspaceId = activeWorkspace.workspace_id;
   workspaceName.value = study.name;
@@ -952,7 +962,6 @@ async function saveStudy(event) {
   if (!variables.length) return notify('Add at least one variable');
   if (variables.some(variable => !variable.name || !variable.key)) return notify('Complete every variable binding');
   if (new Set(variables.map(variable => variable.name)).size !== variables.length) return notify('Variable names must be unique');
-  if (!caseRows.length) return notify('Add at least one complete case');
   const samples = collectCases(variables);
   if (!samples) return;
   createWorkspaceBtn.disabled = true;
@@ -964,6 +973,7 @@ async function saveStudy(event) {
       body: JSON.stringify({
         name: workspaceName.value.trim(),
         variables: variables.map(({ id, kind, originalValue, ...variable }) => variable), samples,
+        uq: JSON.stringify(variables.map(({ name, file, key }) => ({ name, file, key }))) === studyBindings ? studyUq : null,
       }),
     });
     if (generation !== studyGeneration) return;
@@ -1327,6 +1337,16 @@ async function updateStudyConsole(runId) {
   }
   return false;
 }
+
+const uqPanel = createUqPanel({
+  request, notify, hasUnsavedStudy: () => studyDirty,
+  onSaved: async id => {
+    const currentId = editingStudyId;
+    await loadStudies();
+    studySelect.value = currentId || '';
+    if (currentId === id) await openSavedStudy(id);
+  },
+});
 
 const simulationPanel = createSimulationPanel({
   request,

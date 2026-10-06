@@ -598,3 +598,35 @@ def test_turbsim_failure_prevents_openfast(
         assert expected_error in result["error"]
         project = api.WORKSPACE_ROOT / workspace["workspace_id"] / "project/source"
         assert not (project / "case/.openfast-called").exists()
+
+
+@pytest.mark.parametrize('method', ['monte_carlo', 'lhs', 'sobol', 'halton'])
+def test_uq_preview_save_and_reload(monkeypatch, tmp_path, method):
+    source = _source_project(tmp_path / 'source')
+    monkeypatch.setattr(api, 'MODEL_ROOT', tmp_path / 'models')
+    monkeypatch.setattr(api, 'WORKSPACE_ROOT', tmp_path / 'workspaces')
+    with TestClient(api.app) as client:
+        workspace = _import(client, source)
+        base = f"/api/workspaces/{workspace['workspace_id']}/studies"
+        payload = _study_payload(); payload['samples'] = []
+        response = client.post(base, json=payload)
+        assert response.status_code == 201
+        path = f"{base}/{response.json()['study_id']}"
+        before = client.get(path).json()
+        config = {'method': method, 'count': 16, 'seed': 7, 'variables': {
+            'blade_count': {'distribution': 'uniform', 'minimum': 2, 'maximum': 4},
+        }}
+        preview = client.post(path + '/sample', json={'uq': config})
+        assert preview.status_code == 200, preview.text
+        generated = preview.json()
+        assert generated == client.post(path + '/sample', json={'uq': config}).json()
+        assert client.get(path).json() == before
+        update = {**payload, **generated, 'expected_updated_at': before['updated_at']}
+        assert client.put(path, json=update).status_code == 200
+        saved = client.get(path).json()
+        assert saved['uq'] == config
+        assert saved['samples'] == generated['samples']
+        assert client.get(path + '/download').json()['uq'] == config
+        assert client.put(path, json=update).status_code == 409
+        config['variables']['blade_count']['minimum'] = 4
+        assert client.post(path + '/sample', json={'uq': config}).status_code == 400
