@@ -264,67 +264,83 @@ limits without launching a batch. Case-specific native input validation occurs
 when each case starts. Ctrl+C stops new dispatches; active cases finish on the
 server.
 
-### Slurm studies across multiple nodes
+### Submit a study to Slurm in one command
 
-The standalone [scripts/mcfast-study.slurm](scripts/mcfast-study.slurm) script
-runs saved cases on multiple nodes without a web server. Its defaults request
-10 nodes and 8 single-CPU workers per node (up to 80 concurrent cases), a
-2-hour wall time, and 4 GB per CPU. Each worker handles its own subset of cases
-sequentially. Override these defaults with `sbatch` options.
-
-Run preparation on the cluster, from a Linux mcFAST checkout on a filesystem
-shared by the login and compute nodes. Copy/import the workspace there first,
-install the environment with `uv sync --extra dev`, and load the site's
-OpenFAST/TurbSim modules. The model's native controller libraries must also be
-compatible with the cluster. All compute nodes need the same Python environment,
-executables, snapshot, and result paths.
+On the cluster login node, submit a saved study with:
 
 ```bash
-# From the mcFAST checkout on the cluster:
-export MCFAST_PYTHON="$PWD/.venv/bin/python"
-
-# Optional explicit paths override executable discovery:
-# export MCFAST_OPENFAST=/shared/software/bin/openfast
-# export MCFAST_TURBSIM=/shared/software/bin/turbsim
-
-SNAPSHOT=$(uv run mcfast-slurm prepare \
-  --workspace WORKSPACE_ID --study STUDY_ID)
-
-sbatch --account=ACCOUNT --partition=PARTITION \
-  --nodes=10 --ntasks-per-node=8 --time=02:00:00 --mem-per-cpu=4G \
-  scripts/mcfast-study.slurm "$SNAPSHOT"
+uv run mcfast-slurm submit workspaces/WORKSPACE_ID/studies/STUDY_ID.json
 ```
 
-Replace the account/partition values with your site's settings, or omit those
-options when defaults apply. `--ntasks-per-node` is the number of simultaneous
-cases per node. Choose memory for each case and a wall time that covers all
-cases assigned to each worker, including input copying and wind generation.
-Wall time is a scheduling request, not automatically inferred from node choice.
-For example, 160 cases on 80 workers usually require roughly two case runtimes
-plus preparation overhead. Unequal case durations may increase that estimate.
+The command validates and freezes the study, writes its submission script,
+selects the current Python interpreter, submits it with `sbatch`, and prints the
+job ID and snapshot path. No separate preparation command or Python-path export
+is needed. Logs are written inside the snapshot directory.
 
-`prepare` validates the saved bindings and sample types, then freezes the study
-and project in `workspaces/WORKSPACE_ID/slurm/slurm-RUN_ID/`. Subsequent edits to
-the saved study do not affect the snapshot. Each case gets a separate project
-copy and result directory. Native solvers use one computational thread per
-case. A failed case is recorded while other workers continue; the job exits
-with failure if any worker reports failed cases.
+Resource defaults come from [scripts/mcfast-study.slurm](scripts/mcfast-study.slurm),
+including your edits to that file. The template uses 10 nodes and 8 single-CPU
+workers per node (up to 80 concurrent cases). Override settings when needed:
+
+```bash
+uv run mcfast-slurm submit workspaces/WORKSPACE_ID/studies/STUDY_ID.json \
+  --nodes 10 --workers-per-node 8 --account ACCOUNT --partition PARTITION \
+  --time 02:00:00 --mem-per-cpu 4G
+```
+
+For a job array, add `--array`. Each array task requests one node and runs the
+chosen number of concurrent workers. For example:
+
+```bash
+uv run mcfast-slurm submit workspaces/WORKSPACE_ID/studies/STUDY_ID.json \
+  --array --nodes 10 --workers-per-node 8
+```
+
+This submits 10 array tasks, each with 8 workers, with at most 10 array tasks
+active at once. Cases are divided across all 80 workers without duplication.
+Slurm may place multiple array tasks on the same physical node. Use the default
+multi-node mode when you want one allocation spanning 10 distinct nodes.
+
+The CLI also accepts `--workspace WORKSPACE_ID --study STUDY_ID` in place of a
+study file, and `--workspace-root` for a custom workspace directory. Add
+`--dry-run` to prepare the files and show the submission command without
+submitting. Both modes submit once and return immediately; no web server is
+required. Rejected submissions report Slurm's error and retain their snapshot.
+
+Run from a Linux mcFAST environment on a filesystem shared by login and compute
+nodes. Install the environment once with `uv sync --extra dev` and load the
+site's OpenFAST/TurbSim modules before submitting. The model's native controller
+libraries must be compatible with the cluster. All nodes need access to the
+same Python environment, executables, snapshot, and result paths. Optional
+`MCFAST_OPENFAST` and `MCFAST_TURBSIM` environment variables select explicit
+solver paths.
+
+`--workers-per-node` is the number of simultaneous cases per node. Choose
+memory per case and a wall time that covers all cases assigned to each worker,
+including input copying and wind generation. For example, 160 cases on 80
+workers require roughly two case runtimes plus preparation overhead, depending
+on case durations. Wall time is not inferred from the selected nodes.
+
+Each case gets a separate project copy and result directory. Native solvers
+use one computational thread per case. Failed cases are recorded while the
+other workers continue; the job exits with failure if any worker reports failed
+cases. Results use the existing `workspaces/WORKSPACE_ID/results/` layout and
+appear in the app's run history for that workspace.
 
 ```bash
 squeue -j JOB_ID -o "%.18i %.10T %.6D %N"
 sacct -j JOB_ID --format=JobID,State,NNodes,NodeList,ExitCode
-uv run mcfast-slurm status --snapshot "$SNAPSHOT"
-uv run mcfast-slurm status --snapshot "$SNAPSHOT" --details
+uv run mcfast-slurm status --snapshot SNAPSHOT_PATH
+uv run mcfast-slurm status --snapshot SNAPSHOT_PATH --details
 ```
 
-This is one multi-node job, rather than a job array. Case logs and outputs use
-the existing `workspaces/WORKSPACE_ID/results/` layout and appear in the app's
-run history when it opens that workspace. Slurm progress is read through the
-standalone `status` command; this job is not managed by the local Simulation
-batch coordinator. Cancel it with `scancel JOB_ID`. After cancellation or
-wall-time expiry, unfinished case records can still say `running`; check Slurm
-accounting for the job's final state. Prepare a new snapshot before rerunning;
-workers refuse to overwrite case directories from an earlier attempt.
+Submission metadata is saved in `SNAPSHOT_PATH/submission.json`. Case progress
+is read through `status`; these jobs are independent of the local Simulation
+batch coordinator. Cancel with `scancel JOB_ID`. After cancellation or wall-time
+expiry, unfinished case records can still say `running`; use Slurm accounting
+for the job's final state. Submitting again creates a new snapshot and a new job.
+
+The lower-level `prepare`, `worker`, and standalone `.slurm` script remain
+available for custom workflows.
 
 ### SSH setup
 

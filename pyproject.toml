@@ -31,6 +31,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcfast"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"scripts/mcfast-study.slurm" = "mcfast/templates/mcfast-study.slurm"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

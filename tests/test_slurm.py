@@ -165,3 +165,96 @@ sys.exit(max(child.wait() for child in children))
     assert {case['worker_rank'] for case in summary['cases']} == {0, 1, 2, 3}
     assert all(case['slurm_job_id'] == 'test123' for case in summary['cases'])
     assert len(list((root / 'example/results').glob('*/Example.out'))) == 7
+
+
+@pytest.mark.parametrize('array', [False, True])
+def test_submit_freezes_study_selects_python_and_queues_once(tmp_path, monkeypatch, array):
+    import subprocess
+    import sys
+    root, _ = setup(tmp_path)
+    calls = []
+    monkeypatch.setattr(slurm.shutil, 'which', lambda name: '/cluster/bin/sbatch')
+    def submit(command, **kwargs):
+        calls.append(command)
+        assert kwargs == {'capture_output': True, 'text': True, 'check': False}
+        assert '--parsable' in command and '--export=ALL' in command
+        assert '--ntasks-per-node=4' in command
+        assert '--account=project' in command and '--partition=compute' in command
+        assert '--time=01:00:00' in command and '--mem-per-cpu=2G' in command
+        assert command[-1] == str(Path(command[-2]).parent)
+        return subprocess.CompletedProcess(command, 0, '12345;cluster\n', '')
+    monkeypatch.setattr(slurm.subprocess, 'run', submit)
+    result = slurm.submit_study(root, 'example', 'sweep', nodes=3, workers_per_node=4,
+                                account='project', partition='compute', wall_time='01:00:00',
+                                memory_per_cpu='2G', array=array)
+    assert len(calls) == 1
+    assert result['job_id'] == '12345' and result['cluster'] == 'cluster'
+    snapshot = Path(result['snapshot'])
+    script = (snapshot / 'submit.slurm').read_text()
+    assert 'export MCFAST_PYTHON=' + slurm.shlex.quote(sys.executable) in script
+    assert json.loads((snapshot / 'submission.json').read_text()) == result
+    if array:
+        assert '--nodes=1' in calls[0] and '--array=0-2%3' in calls[0]
+        assert 'export MCFAST_SLURM_ARRAY=1' in script
+    else:
+        assert '--nodes=3' in calls[0]
+        assert 'unset MCFAST_SLURM_ARRAY' in script
+
+
+def test_dry_run_without_slurm_keeps_template_defaults(tmp_path, monkeypatch):
+    root, _ = setup(tmp_path)
+    monkeypatch.setattr(slurm.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(slurm.subprocess, 'run', lambda *args, **kwargs: pytest.fail('Must not submit'))
+    result = slurm.submit_study(root, 'example', 'sweep', dry_run=True)
+    assert result['status'] == 'prepared'
+    assert result['command'][0] == 'sbatch'
+    assert not any(option.startswith('--time=') for option in result['command'])
+    template = Path(__file__).resolve().parents[1] / 'scripts/mcfast-study.slurm'
+    generated = (Path(result['snapshot']) / 'submit.slurm').read_text()
+    assert [line for line in generated.splitlines() if line.startswith('#SBATCH')] == [line for line in template.read_text().splitlines() if line.startswith('#SBATCH')]
+
+
+def test_submit_failure_is_recorded_and_missing_sbatch_does_not_copy(tmp_path, monkeypatch):
+    import subprocess
+    root, _ = setup(tmp_path)
+    original = set((root / 'example/slurm').iterdir())
+    monkeypatch.setattr(slurm.shutil, 'which', lambda name: None)
+    with pytest.raises(ValueError, match='login node'):
+        slurm.submit_study(root, 'example', 'sweep')
+    assert set((root / 'example/slurm').iterdir()) == original
+    monkeypatch.setattr(slurm.shutil, 'which', lambda name: 'sbatch')
+    monkeypatch.setattr(slurm.subprocess, 'run', lambda command, **kwargs: subprocess.CompletedProcess(command, 1, '', 'Invalid account'))
+    with pytest.raises(ValueError, match='Invalid account'):
+        slurm.submit_study(root, 'example', 'sweep')
+    failed = (set((root / 'example/slurm').iterdir()) - original).pop()
+    assert json.loads((failed / 'submission.json').read_text())['status'] == 'rejected'
+
+
+def test_array_worker_identity_covers_cases_once_across_all_nodes(monkeypatch):
+    monkeypatch.setenv('MCFAST_SLURM_ARRAY', '1')
+    monkeypatch.setenv('SLURM_NTASKS', '4')
+    monkeypatch.setenv('SLURM_ARRAY_TASK_COUNT', '3')
+    indices = []
+    ranks = []
+    for node in range(3):
+        monkeypatch.setenv('SLURM_ARRAY_TASK_ID', str(node))
+        for local_rank in range(4):
+            monkeypatch.setenv('SLURM_PROCID', str(local_rank))
+            rank, count = slurm.worker_identity()
+            assert count == 12
+            ranks.append(rank)
+            indices.extend(slurm.case_indices(37, rank, count))
+    assert ranks == list(range(12))
+    assert sorted(indices) == list(range(37))
+
+
+def test_submit_accepts_one_study_file_argument(tmp_path, monkeypatch, capsys):
+    import sys
+    root, _ = setup(tmp_path)
+    study = root / 'example/studies/sweep.json'
+    monkeypatch.setattr(slurm.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(sys, 'argv', ['mcfast-slurm', 'submit', str(study), '--dry-run'])
+    slurm.main()
+    output = capsys.readouterr().out
+    assert 'sbatch --parsable' in output and 'Snapshot:' in output
+    assert 'submit.slurm' in output
