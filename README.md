@@ -314,6 +314,15 @@ same Python environment, executables, snapshot, and result paths. Optional
 `MCFAST_OPENFAST` and `MCFAST_TURBSIM` environment variables select explicit
 solver paths.
 
+Case preparation preserves controller paths such as
+`../../../.openfast/conda-4.2.1/lib/libdiscon.so` by creating a `.openfast`
+directory link beside each case's `project` directory, pointing to this
+checkout's shared `.openfast` runtime. The relative path in ServoDyn stays
+unchanged, and the Conda environment is not copied per case. Install the runtime
+in the checkout on the cluster; it must remain accessible to all compute nodes.
+This also applies to local study cases. Existing absolute controller paths
+continue to use their configured location.
+
 `--workers-per-node` is the number of simultaneous cases per node. Choose
 memory per case and a wall time that covers all cases assigned to each worker,
 including input copying and wind generation. For example, 160 cases on 80

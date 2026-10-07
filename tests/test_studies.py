@@ -155,6 +155,35 @@ def test_rebase_native_libraries_and_external_references(tmp_path):
         prepare_case(source, study, manifest, 0, tmp_path / 'bad')
 
 
+def test_runtime_staging_does_not_create_links_outside_case(tmp_path, monkeypatch):
+    checkout = tmp_path / 'checkout'
+    library = checkout / '.openfast/conda-4.2.1/lib/libdiscon.so'
+    library.parent.mkdir(parents=True)
+    library.write_bytes(b'controller')
+    monkeypatch.setattr(studies, 'PROJECT_ROOT', checkout)
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'Servo.dat').write_text(
+        '"../../.openfast/conda-4.2.1/lib/libdiscon.so" DLL_FileName - controller\n')
+    with pytest.raises(ValueError, match='Missing native library'):
+        prepare_case(source, {'variables': [], 'samples': [{}]}, {}, 0,
+                     tmp_path / 'case/project')
+    assert not (tmp_path / '.openfast').exists()
+    assert not (tmp_path / 'case/.openfast').exists()
+
+
+def test_missing_shared_controller_still_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(studies, 'PROJECT_ROOT', tmp_path / 'checkout')
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'Servo.dat').write_text(
+        '"../.openfast/conda-4.2.1/lib/libdiscon.so" DLL_FileName - controller\n')
+    with pytest.raises(ValueError, match='Missing native library'):
+        prepare_case(source, {'variables': [], 'samples': [{}]}, {}, 0,
+                     tmp_path / 'case/project')
+    assert not (tmp_path / 'case/.openfast').is_symlink()
+
+
 def test_api_batch_launch_dry_run_and_result_history(tmp_path, monkeypatch):
     root, manifest, study = setup(tmp_path, monkeypatch)
     monkeypatch.setattr(api, 'WORKSPACE_ROOT', root)
@@ -210,4 +239,3 @@ awk '/URef/ {print $1}' "$1" > "${1%.in}.bts"
     outputs = [(root / 'example/results' / case['run_id'] / 'Example.out').read_text().strip() for case in batch['cases']]
     assert outputs == ['8', '12']
     assert (project / 'Wind/Case.bts').read_bytes() == b'baseline wind'
-

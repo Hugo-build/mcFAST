@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from mcfast import slurm
+from mcfast import slurm, studies
 from mcfast.studies import atomic_json
 
 
@@ -85,6 +85,41 @@ def test_nonzero_solver_exit_is_recorded(tmp_path, monkeypatch):
     assert slurm.run_worker(snapshot, 0, 1, '/fake/openfast') == 1
     record = slurm.snapshot_status(snapshot)['cases'][0]
     assert record['return_code'] == 2 and record['status'] == 'failed'
+
+
+def test_workers_preserve_relative_controller_runtime_layout(tmp_path, monkeypatch):
+    _, snapshot = setup(tmp_path, 2)
+    library = tmp_path / '.openfast/conda-4.2.1/lib/libdiscon.so'
+    library.parent.mkdir(parents=True)
+    library.write_bytes(b'controller')
+    (library.parent / 'dependency.so').write_bytes(b'dependency')
+    monkeypatch.setattr(studies, 'PROJECT_ROOT', tmp_path)
+    relative = '../../../.openfast/conda-4.2.1/lib/libdiscon.so'
+    servo_relative = 'IEA-15-240-RWT/IEA-15-240-RWT-UMaineSemi/Servo.dat'
+    servo = snapshot / 'project' / servo_relative
+    servo.parent.mkdir(parents=True)
+    servo.write_text(f'"{relative}" DLL_FileName - controller\n')
+    (snapshot / 'project/Example.fst').write_text(
+        f'3 NumBl - blades\n"{servo_relative}" ServoFile - servo\n')
+    seen = []
+    def execute(project, manifest, executable, turbsim, results, run_id, metadata, phase):
+        copied_servo = project / servo_relative
+        assert studies.parse_file(copied_servo)['data']['DLL_FileName'] == relative
+        controller = copied_servo.parent / relative
+        assert controller.read_bytes() == b'controller'
+        assert (controller.parent / 'dependency.so').read_bytes() == b'dependency'
+        assert (project.parent / '.openfast').is_symlink()
+        assert controller.resolve() == library
+        seen.append(run_id)
+        output = results / run_id
+        atomic_json(output / 'manifest.json', {'status': 'completed', 'return_code': 0})
+        return 0, output
+    monkeypatch.setattr(slurm, 'execute_pipeline', execute)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes = list(pool.map(lambda rank: slurm.run_worker(snapshot, rank, 2, '/fake/openfast'), range(2)))
+    assert codes == [0, 0]
+    assert len(seen) == 2
+    assert servo.read_text().startswith(f'"{relative}"')
 
 
 def test_empty_study_and_invalid_binding_are_rejected(tmp_path):

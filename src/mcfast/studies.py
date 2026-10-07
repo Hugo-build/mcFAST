@@ -13,7 +13,7 @@ import uuid
 from .models import safe_path, referenced_files
 from .parser import parse_file, update_file
 from .pipeline import execute_pipeline
-from .runner import find_openfast, find_turbsim
+from .runner import PROJECT_ROOT, find_openfast, find_turbsim
 
 TERMINAL = {'completed', 'failed', 'cancelled', 'interrupted'}
 IDENTIFIER = re.compile(r'[A-Za-z0-9_-]+')
@@ -54,6 +54,22 @@ class Capacity:
 
 
 LOCAL_CAPACITY = Capacity()
+
+
+def stage_native_runtime(native: Path, destination: Path) -> None:
+    """Preserve case-relative .openfast references using the shared runtime."""
+    runtime_link = destination.absolute().parent / '.openfast'
+    # Normalize '..' without following a pre-existing symlink. Only create a
+    # link inside this case, never at a location outside its directory.
+    candidate = Path(os.path.abspath(native))
+    if not candidate.is_relative_to(runtime_link):
+        return
+    runtime = (PROJECT_ROOT / '.openfast').resolve()
+    if not (runtime / candidate.relative_to(runtime_link)).is_file():
+        return
+    if not runtime_link.exists() and not runtime_link.is_symlink():
+        # Link the whole runtime so loader-relative dependencies remain usable.
+        runtime_link.symlink_to(runtime, target_is_directory=True)
 
 
 def prepare_case(source: Path, study: dict, manifest: dict, index: int,
@@ -109,6 +125,8 @@ def prepare_case(source: Path, study: dict, manifest: dict, index: int,
             if referenced.suffix.lower() in {'.dll', '.so', '.dylib'}:
                 key = path.relative_to(destination).as_posix() + ':' + parameter['key']
                 native = referenced if referenced.is_absolute() else path.parent / referenced
+                if not referenced.is_absolute() and not native.is_file():
+                    stage_native_runtime(native, destination)
                 if not native.is_file():
                     raise ValueError(f'Missing native library for {key}: {native}')
                 continue
