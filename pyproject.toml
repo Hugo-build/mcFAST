@@ -23,6 +23,7 @@ mcfast = "mcfast.cli:main"
 mcfast-run = "mcfast.runner:main"
 mcfast-study-run = "mcfast.study_cli:main"
 mcfast-slurm = "mcfast.slurm:main"
+mcfast-extract = "mcfast.extract:main"
 
 [build-system]
 requires = ["hatchling"]

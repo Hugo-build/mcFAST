@@ -401,7 +401,59 @@ Additional APIs:
 
 
 
+## Extract case inputs and output statistics
 
+Extract recorded study variables and tower-base bending statistics without running
+OpenFAST or starting the web server:
+
+```bash
+uv run mcfast-extract \
+  workspaces/iea-15-umainesemi-turbsim-v2-20261003-141931-72da34/results \
+  --output workspaces/iea-15-umainesemi-turbsim-v2-20261003-141931-72da34/extracted
+```
+
+The default interval includes samples at **400 seconds and later**, excluding
+startup. Use `--start 0` for the full record, or `--start 400 --end 3600` for a
+bounded interval; both boundaries are inclusive. Add other output channels with
+repeatable options such as `--channel GenPwr --channel PtfmPitch`. Existing
+reports are protected; use `--overwrite` to replace them.
+
+`summary.csv` has one row per discovered case, including incomplete cases in
+nested folders. Columns include:
+
+- `case_id`: case path relative to the supplied results folder.
+- `run_id`, `study_id`, `sample_index`, and `simulation_status`: recorded run metadata.
+- `input.NAME`: each variable in the run manifest's `sample_values`; missing
+  values remain blank. Values are never inferred from a nearby study or current deck.
+- `metric.CHANNEL.min`, `.max`, `.abs_max`, and their corresponding `_time`
+  fields: signed extrema and maximum absolute magnitude, with occurrence times
+  in seconds. Ties use the earliest sample. `.mean` and `.std` are the sample
+  mean and population standard deviation (`ddof=0`). `.unit` preserves the
+  output channel unit; `.valid_count` and `.excluded_count` describe coverage.
+- `metric.tower_base_bending_resultant.max` and `.max_time`: the maximum of
+  `sqrt(TwrBsMxt(t)^2 + TwrBsMyt(t)^2)` calculated at simultaneous timestamps.
+  This requires matching component units and both values to be finite.
+- `interval.*`: recorded bounds, actual analyzed bounds, and sample counts.
+- `extraction_status`: `successful`, `partial` (some statistics available with
+  diagnostics), or `unavailable` (no valid requested statistics).
+- `manifest_source`, `input_source`, `output_source`, and `diagnostics`:
+  provenance and reasons for missing or partial data.
+
+`summary.json` contains the same data as structured records, plus extraction
+settings, schema version, units, and status counts. Nonfinite channel values are
+excluded and flagged. Simulation failure does not prevent extraction from a
+readable output; simulation status is reported separately. Module outputs such
+as `.MD.out` are excluded. Binary main outputs take precedence over text, and a
+corrupt binary output is reported rather than silently replaced with text.
+
+For Python callers, discovery, calculation, and export are separate:
+
+```python
+from mcfast.extract import extract_results, export_reports
+
+report = extract_results("path/to/results", start=400, channels=["GenPwr"])
+export_reports(report, "path/to/extracted")
+```
 
 # License
 
@@ -423,5 +475,3 @@ The mcFAST license does not replace or modify those third-party licenses.
 
 
 
-
--
