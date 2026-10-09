@@ -150,7 +150,10 @@ def test_cli_and_existing_single_report(tmp_path, monkeypatch, capsys):
     write_case(root)
     monkeypatch.setattr("sys.argv", ["mcfast-extract", str(root), "--output", str(out), "--channel", "GenPwr"])
     main()
-    assert "successful: 1" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Processed 0/1 cases; remaining: 1" in output
+    assert "Processed 1/1 cases; remaining: 0" in output
+    assert "successful: 1" in output
     (out / "summary.csv").unlink()
     with pytest.raises(SystemExit) as error:
         main()

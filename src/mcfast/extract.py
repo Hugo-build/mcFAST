@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from collections.abc import Callable
 import csv
 import json
 from pathlib import Path
@@ -147,8 +148,9 @@ def calculate_metrics(source: Path, channels: list[str], start: float, end: floa
 
 
 def extract_results(results_dir: str | Path, *, start: float = 400.0,
-                    end: float | None = None, channels: list[str] | None = None) -> dict:
-    """Extract one record per case without writing reports or changing sources."""
+                    end: float | None = None, channels: list[str] | None = None,
+                    progress: Callable[[int, int], None] | None = None) -> dict:
+    """Extract cases; optionally notify progress(processed, total) after discovery and each case."""
     root = Path(results_dir).expanduser().resolve()
     if not root.is_dir():
         raise ValueError(f"Results directory does not exist: {root}")
@@ -156,7 +158,10 @@ def extract_results(results_dir: str | Path, *, start: float = 400.0,
         raise ValueError("Choose finite start/end times with start <= end.")
     selected = list(dict.fromkeys([*DEFAULT_CHANNELS, *(channels or [])]))
     records = []
-    for case in discover_cases(root):
+    cases = discover_cases(root)
+    if progress is not None:
+        progress(0, len(cases))
+    for case in cases:
         manifest, inputs, diagnostics = load_inputs(case)
         record = {"case_id": case.relative_to(root).as_posix(), "case_path": str(case),
                   "run_id": manifest.get("run_id", case.name), "study_id": manifest.get("study_id"),
@@ -179,6 +184,8 @@ def extract_results(results_dir: str | Path, *, start: float = 400.0,
         available = any(metric.get("valid_count", 0) for metric in record["metrics"].values())
         record["extraction_status"] = "unavailable" if not available else "partial" if diagnostics else "successful"
         records.append(record)
+        if progress is not None:
+            progress(len(records), len(cases))
     counts = {status: sum(r["extraction_status"] == status for r in records)
               for status in ("successful", "partial", "unavailable")}
     return {"schema_version": 1, "results_dir": str(root),
@@ -229,7 +236,11 @@ def main() -> None:
     try:
         if not args.overwrite and any((args.output / name).exists() for name in ("summary.csv", "summary.json")):
             raise FileExistsError("Report already exists; use --overwrite to replace it.")
-        report = extract_results(args.results_dir, start=args.start, end=args.end, channels=args.channel)
+        def print_progress(processed: int, total: int) -> None:
+            print(f"Processed {processed}/{total} cases; remaining: {total - processed}", flush=True)
+
+        report = extract_results(args.results_dir, start=args.start, end=args.end,
+                                 channels=args.channel, progress=print_progress)
         paths = export_reports(report, args.output, overwrite=args.overwrite)
     except (OSError, ValueError) as exc:
         parser.exit(1, f"{exc}\n")

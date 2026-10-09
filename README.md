@@ -418,6 +418,12 @@ bounded interval; both boundaries are inclusive. Add other output channels with
 repeatable options such as `--channel GenPwr --channel PtfmPitch`. Existing
 reports are protected; use `--overwrite` to replace them.
 
+The command prints progress after discovery and after each case, for example
+`Processed 25/300 cases; remaining: 275`. Messages flush immediately so progress
+is visible in redirected logs as well as the terminal. Python callers can pass
+`progress=callback` to receive `(processed, total)` updates; otherwise extraction
+is silent.
+
 `summary.csv` has one row per discovered case, including incomplete cases in
 nested folders. Columns include:
 
@@ -472,6 +478,5 @@ Third-party dependencies and downloaded turbine models retain their respective
 licenses. OpenFAST is separately licensed under the
 [Apache License 2.0](https://github.com/OpenFAST/openfast/blob/main/LICENSE).
 The mcFAST license does not replace or modify those third-party licenses.
-
 
 
