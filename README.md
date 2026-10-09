@@ -1,25 +1,64 @@
 # mcFAST
 
-mcFAST is a local, browser-based workbench for OpenFAST input decks. It walks
+mcFAST (monte-carlo with openfast) is a local, browser-based workbench for OpenFAST input decks. It walks
 the references from a primary `.fst` file, presents scalar inputs as editable
 records, preserves the original text format on save, and renders a parametric
 Three.js turbine/platform view from values in the model.
 
-## Quick start (macOS and Linux)
+It supports creating variables and producing samples for batch simulations in a graphical user interface.
 
-Install [uv](https://docs.astral.sh/uv/) and Node.js 20.19 or newer, then run:
+## Latest implementation
+
+2026-10-06: 
+- [X] Adding side bar menus about creating variables and basic sampling
+- [X] Having checked hosting on remote server through ssh
+- [X] Having checked the command line job submission using slurm.
+
+---
+## Quick start (macOS, Linux or WSL for windows)
+
+Make sure the `openfast` is installed with `conda` 
+(we recommend to have a `miniconda` as the package manager to install `openfast`).
+This `miniconda` works across MacOS, Linux and WSL. When the `miniconda` is installed, 
+please install and set the openfast in the path where you settle the `mcFAST` repository.
+You can use `cd <my path of mcFAST>` to navigate to that dictionary, and run the following commands:
+
+```bash
+# Creates an isolated native executable environment inside the project.
+conda create --yes --prefix .openfast/conda-4.2.1 \
+  --channel conda-forge --override-channels openfast=4.2.1
+
+# Install the model's matching ROSCO controller without its optional Python UI stack.
+conda install --yes --no-deps --prefix .openfast/conda-4.2.1 \
+  --channel conda-forge --override-channels rosco=2.10.1
+conda install --yes --prefix .openfast/conda-4.2.1 \
+  --channel conda-forge --override-channels zeromq=4.3.5
+
+# Expose that executable to the uv virtual environment.
+cp scripts/openfast .venv/bin/openfast
+chmod +x .venv/bin/openfast
+```
+
+After the `openfast` and `mcFAST` are settled,
+install [uv](https://docs.astral.sh/uv/) and [Node.js 20.19](https://nodejs.org/en/download) or newer, then run:
 
 ```bash
 uv sync --extra dev
 uv run python scripts/fetch_iea15mw.py
 uv run python scripts/fetch_iea22mw.py
 cd web && npm install && npm run build && cd ..
+
+```
+
+When everything is installed successfully, please try to launch the web-UI with
+```bash
 uv run mcfast
 ```
 
+The user interface in the browser may look like this:
 ![Screenshot of webUI](doc/figs/screenshot_mcfast_UI.png)
 
-Open <http://127.0.0.1:8000>. The model fetchers extract only the OpenFAST
+The program may open http://127.0.0.1:8000 by default. The model fetchers extract only the OpenFAST
 subtrees from pinned official releases. The IEA Wind 15 MW fetcher uses v1.1.17
 and includes the VolturnUS-S/UMaineSemi input deck. The IEA Wind 22 MW fetcher
 uses v1.1.0 and includes both monopile and semisubmersible input decks from the
@@ -44,22 +83,6 @@ executable. `uv` cannot install Conda packages. The downloaded IEA 15 MW v1.1.17
 deck targets OpenFAST 4.1, so use the compatible OpenFAST 4.2.1 Conda package
 instead of the current Homebrew 5.x release:
 
-```bash
-# Creates an isolated native executable environment inside the project.
-conda create --yes --prefix .openfast/conda-4.2.1 \
-  --channel conda-forge --override-channels openfast=4.2.1
-
-# Install the model's matching ROSCO controller without its optional Python UI stack.
-conda install --yes --no-deps --prefix .openfast/conda-4.2.1 \
-  --channel conda-forge --override-channels rosco=2.10.1
-conda install --yes --prefix .openfast/conda-4.2.1 \
-  --channel conda-forge --override-channels zeromq=4.3.5
-
-# Expose that executable to the uv virtual environment.
-cp scripts/openfast .venv/bin/openfast
-chmod +x .venv/bin/openfast
-```
-
 Then run a deck through the uv-managed command:
 
 ```bash
@@ -78,6 +101,7 @@ press **RUN OPENFAST**, and expand **RESULTS / CONSOLE**. The console is streame
 while the process runs, and every saved result is linked when it becomes
 available.
 
+---
 ## Result playback
 
 Completed runs load paused in the 3D viewport. Use **Play/Pause**, **Replay**,
