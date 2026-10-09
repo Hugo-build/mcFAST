@@ -7,6 +7,7 @@ Three.js turbine/platform view from values in the model.
 
 It supports creating variables and producing samples for batch simulations in a graphical user interface.
 
+
 ## Latest implementation
 
 2026-10-06: 
@@ -397,3 +398,30 @@ Additional APIs:
 - `GET /api/workspaces/{id}/batches/{batch}` accepts `page` and `page_size`.
 - `POST /api/workspaces/{id}/batches/{batch}/stop` stops new dispatches.
 - `POST /api/workspaces/{id}/batches/{batch}/retry` accepts new local `slots`.
+
+
+
+
+
+# License
+
+mcFAST is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+The license permits noncommercial use, modification, and redistribution, subject
+to its terms, including the requirement to pass along the license and any required
+notices. It also expressly permits use by the noncommercial organizations listed
+in the license, including educational institutions and public research organizations.
+
+Commercial use, including commercial sale of mcFAST or modified versions, requires
+a separate written agreement with the copyright holder. Contact the project
+maintainer to discuss commercial licensing. This restriction covers commercial
+use of the software, not only its sale; the full license defines permitted purposes.
+
+Third-party dependencies and downloaded turbine models retain their respective
+licenses. OpenFAST is separately licensed under the
+[Apache License 2.0](https://github.com/OpenFAST/openfast/blob/main/LICENSE).
+The mcFAST license does not replace or modify those third-party licenses.
+
+
+
+
+-
