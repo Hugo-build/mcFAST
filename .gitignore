@@ -15,3 +15,4 @@ models/IEA-22-280-RWT/
 results/openfast/*
 !results/openfast/README.md
 workspaces/
+.DS_Store
